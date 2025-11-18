@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+websockets
+sounddevice
+soundfile
+numpy
+torch
+transformers
+silero-vad
+scipy
+python-socketio

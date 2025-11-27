@@ -16,6 +16,7 @@ from vad_silero import vad_prob_for_buffer
 from utils.audio_utils import highpass_filter, normalize_audio
 from caption import update_overlay_text
 from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
+from caption import update_overlay_text 
 
 import noisereduce as nr
 
@@ -46,6 +47,9 @@ def process_final_sentence(x, sr=16000):
 MODEL_ID = "vinai/PhoWhisper-tiny"
 SR = 16000
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+MAX_BUFFER_SEC = 10 #giữ 10s audio buffer
+MAX_BUFFER = MAX_BUFFER_SEC * SR
 
 print(f"🔄 Loading PhoWhisper on {DEVICE}...")
 processor = AutoProcessor.from_pretrained(MODEL_ID)
@@ -172,6 +176,9 @@ def transcribe_audio(audio_np):
     try:
         inputs = processor(audio=audio_np, sampling_rate=SR, return_tensors="pt")
         input_features = inputs.input_features.to(DEVICE)
+
+        attention_mask = inputs.attention_mask.to(DEVICE) if hasattr(inputs, 'attention_mask') else None
+
         with torch.no_grad():
             ids = model.generate(input_features, max_new_tokens=128)
         text = processor.batch_decode(ids, skip_special_tokens=True)[0]
@@ -223,8 +230,17 @@ async def ws_endpoint(ws: WebSocket):
             if len(audio_bytes) == 0:
                 continue
             pcm = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+            #async with state.lock:
+                #state.buffer = np.concatenate([state.buffer, pcm])
             async with state.lock:
                 state.buffer = np.concatenate([state.buffer, pcm])
+                if len(state.buffer) > MAX_BUFFER:
+                    state.buffer = state.buffer[-MAX_BUFFER:]
+                    print(f"🔧 Buffer trimmed: {len(state.buffer)} samples")  # D\ebug4
+                # Debug: in buffer size mỗi 100 chunks
+                if len(state.buffer) % (100 * CHUNK_SAMPLES) < CHUNK_SAMPLES:
+                    buffer_seconds = len(state.buffer) / SR
+                    print(f"📊 Buffer size: {buffer_seconds:.1f}s ({len(state.buffer)} samples)")
 
             prob = vad_prob_for_buffer(pcm)
             now = time.time()
@@ -260,43 +276,121 @@ async def ws_endpoint(ws: WebSocket):
         broadcasters.pop(cid, None)
 
 # ----------------- VIEWER HTML -----------------
-VIEWER_HTML = """
+VIEWER_HTML = r"""
 <!doctype html>
 <html>
 <head>
-<meta charset="utf-8" />
-<title>Realtime Captions Viewer</title>
-<style>
-body { background: #111; color: white; font-family: Arial, sans-serif; padding: 20px }
-#vad { color: yellow; font-weight: bold }
-#partial { color: #ddd; font-size: 24px; margin-top: 10px }
-#final { color: #7cff7c; font-size: 26px; margin-top: 8px }
-.caption-box { background: rgba(0,0,0,0.6); padding: 12px; border-radius: 8px; max-width: 1100px }
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Realtime Captions Viewer</title>
+  <style>
+    :root{
+      --bg:#0f1722;
+      --panel: rgba(255,255,255,0.04);
+      --accent: #7cff7c;
+      --muted: #aab3bd;
+      --partial: #ffffff;
+      --final: #7cff7c;
+    }
+    html,body{height:100%;margin:0;background:var(--bg);font-family:Inter,system-ui,Arial; color:var(--partial);}
+    .container{max-width:1000px;margin:20px auto;padding:18px;}
+    h1{margin:0 0 12px;font-size:20px;color:var(--final)}
+    .caption-box{background:var(--panel);padding:16px;border-radius:12px;box-shadow:0 6px 18px rgba(0,0,0,0.5);}
+    #vad{color: #ffd166; font-weight:600; margin-bottom:8px;}
+    #partial{color:var(--partial); font-size:22px; line-height:1.3; min-height:48px; white-space:pre-wrap; word-break:break-word;}
+    #final{color:var(--final); font-size:20px; margin-top:8px; opacity:0.95; white-space:pre-wrap; word-break:break-word;}
+    .controls{margin-top:12px; display:flex; gap:8px; align-items:center;}
+    .btn{background:#111827;color:white;padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);cursor:pointer;}
+    .status{margin-left:auto;color:var(--muted);font-size:13px}
+    .history{margin-top:14px; font-size:14px; color:var(--muted); max-height:220px; overflow:auto;}
+    .history div{padding:6px 8px;border-bottom:1px dashed rgba(255,255,255,0.02);}
+    @media (max-width:600px){
+      .container{padding:12px}
+      #partial{font-size:18px}
+      #final{font-size:18px}
+    }
+  </style>
 </head>
 <body>
-<h1>Realtime Captions Viewer</h1>
-<div class="caption-box">
-<div id="vad"></div>
-<div id="partial"></div>
-<div id="final"></div>
-</div>
+  <div class="container">
+    <h1>Realtime Captions Viewer</h1>
+    <div class="caption-box" id="box">
+      <div id="vad"></div>
+      <div id="partial"></div>
+      <div id="final"></div>
+      <div class="controls">
+        <button id="clearBtn" class="btn">Clear final</button>
+        <button id="fullscreenBtn" class="btn">Fullscreen</button>
+        <div class="status" id="stat">Not connected</div>
+      </div>
+      <div class="history" id="history"></div>
+    </div>
+  </div>
+
 <script>
-const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
-const wsUrl = `${wsProto}://${location.host}/ws?role=viewer`;
-const ws = new WebSocket(wsUrl);
-ws.onmessage = (ev) => {
-    try {
+(function(){
+  const stat = document.getElementById('stat');
+  const partialEl = document.getElementById('partial');
+  const finalEl = document.getElementById('final');
+  const vadEl = document.getElementById('vad');
+  const historyEl = document.getElementById('history');
+  const clearBtn = document.getElementById('clearBtn');
+  const fullscreenBtn = document.getElementById('fullscreenBtn');
+
+  clearBtn.onclick = () => { finalEl.innerText = ''; };
+  fullscreenBtn.onclick = () => {
+    const el = document.documentElement;
+    if (el.requestFullscreen) el.requestFullscreen();
+  };
+
+  // build ws URL that matches server host + role=viewer
+  const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const wsUrl = `${wsProto}://${location.host}/ws?role=viewer`;
+  let ws;
+  let reconnectDelay = 1000;
+
+  function connect(){
+    stat.innerText = 'Connecting...';
+    ws = new WebSocket(wsUrl);
+    ws.onopen = () => {
+      stat.innerText = 'Connected';
+      reconnectDelay = 1000;
+      console.log('[viewer] ws open', wsUrl);
+    };
+    ws.onclose = (ev) => {
+      stat.innerText = 'Disconnected — retrying...';
+      setTimeout(connect, reconnectDelay);
+      reconnectDelay = Math.min(60000, reconnectDelay * 1.5);
+    };
+    ws.onerror = (e) => {
+      ws.close();
+    };
+    ws.onmessage = (ev) => {
+      try {
         const data = JSON.parse(ev.data);
-        if (data.type === 'realtime') document.getElementById('partial').innerText = data.text || '';
-        else if (data.type === 'fullSentence') {
-            document.getElementById('final').innerText = data.text || '';
-            document.getElementById('partial').innerText = '';
+        const t = data.type;
+        if (t === 'realtime'){
+          partialEl.innerText = data.text || '';
+        } else if (t === 'fullSentence'){
+          const txt = data.text || '';
+          finalEl.innerText = txt;
+          partialEl.innerText = '';
+          const row = document.createElement('div');
+          row.innerText = (new Date()).toLocaleTimeString() + ' — ' + txt;
+          historyEl.prepend(row);
+        } else if (t === 'vad_start'){
+          vadEl.innerText = '🎤 Listening...';
+        } else if (t === 'vad_stop'){
+          vadEl.innerText = '';
         }
-        else if (data.type === 'vad_start') document.getElementById('vad').innerText = '🎤 Listening...';
-        else if (data.type === 'vad_stop') document.getElementById('vad').innerText = '';
-    } catch(e){console.error(e)}
-}
+      } catch(e){
+        console.error('bad msg', e, ev.data);
+      }
+    };
+  }
+
+  connect();
+})();
 </script>
 </body>
 </html>

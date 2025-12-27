@@ -2,20 +2,84 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# Virtual Environments
+# Virtual Environment
 venv/
 .venv/
+ENV/
 env/
-.env
+.uv/
 
-# IDEs
+# IDE
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Environment
+.env
+.env.local
+.env.*.local
 
 # Logs
 *.log
+logs/
 
-# System
-.DS_Store
-Thumbs.db
+# Cache
+.cache/
+*.cache
+.ruff_cache/
+
+# Modal
+.modal/
+
+# Model cache
+models/
+*.pt
+*.bin
+*.safetensors
+
+# Audio files (remove if you want to track them)
+*.wav
+*.mp3
+*.m4a
+*.ogg
+debug_audio/
+
+# Node (if using any JS tooling)
+node_modules/
+
+# HuggingFace cache
+.huggingface/
+
+# Temporary files
+*.tmp
+
+# Agent/AI tools
+.agent/
+
+# UV lock file
+uv.lock

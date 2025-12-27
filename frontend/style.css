@@ -1,0 +1,924 @@
+/**
+ * ASR Thesis - Clean Modern Design
+ * Matching TransyncAI style
+ */
+
+/* Reset */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+:root {
+    --primary: #3b82f6;
+    --primary-dark: #2563eb;
+    --success: #10b981;
+    --danger: #ef4444;
+    --text: #1f2937;
+    --text-light: #6b7280;
+    --bg: #ffffff;
+    --bg-gray: #f9fafb;
+    --border: #e5e7eb;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    color: var(--text);
+    background: var(--bg-gray);
+    line-height: 1.5;
+}
+
+/* Layout */
+.app {
+    min-height: 100vh;
+    display: flex;
+}
+
+.main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Toolbar */
+.toolbar {
+    background: white;
+    border-bottom: 1px solid var(--border);
+    padding: 1rem 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 2rem;
+}
+
+.toolbar-left,
+.toolbar-center,
+.toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.toolbar-center {
+    flex: 1;
+    justify-content: center;
+}
+
+/* Logo Text Only */
+.logo-text {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--text);
+    margin: 0;
+}
+
+/* Dropdown */
+.dropdown {
+    position: relative;
+}
+
+.dropdown-btn {
+    padding: 0.5rem 1rem;
+    background: var(--bg-gray);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 0.9rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    transition: all 0.2s;
+}
+
+.dropdown-btn:hover {
+    background: #f3f4f6;
+}
+
+.dropdown-arrow {
+    font-size: 0.7rem;
+    color: var(--text-light);
+}
+
+.dropdown-menu {
+    position: absolute;
+    top: calc(100% + 0.25rem);
+    left: 0;
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    min-width: 160px;
+    display: none;
+    z-index: 100;
+}
+
+.dropdown-menu.active {
+    display: block;
+}
+
+.dropdown-item {
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    transition: background 0.2s;
+    font-size: 0.9rem;
+}
+
+.dropdown-item:hover {
+    background: var(--bg-gray);
+}
+
+.dropdown-item:first-child {
+    border-radius: 6px 6px 0 0;
+}
+
+.dropdown-item:last-child {
+    border-radius: 0 0 6px 6px;
+}
+
+/* Horizontal Audio Meter */
+.audio-meter-horizontal {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: 32px;
+}
+
+.meter-bar-h {
+    width: 4px;
+    height: 20px;
+    background: var(--border);
+    border-radius: 2px;
+    transition: all 0.1s;
+}
+
+.meter-bar-h.active {
+    background: linear-gradient(90deg, var(--success), #059669);
+    height: 28px;
+}
+
+/* Timer */
+.timer {
+    font-variant-numeric: tabular-nums;
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--text);
+    min-width: 90px;
+    text-align: center;
+}
+
+/* Square Record Button */
+.record-btn-square {
+    width: 60px;
+    height: 60px;
+    background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s;
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+.record-btn-square:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(59, 130, 246, 0.4);
+}
+
+.record-btn-square.recording {
+    background: linear-gradient(135deg, var(--danger), #dc2626);
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.85;
+    }
+}
+
+.record-btn-square svg {
+    width: 28px;
+    height: 28px;
+    color: white;
+    fill: white;
+    /* Fix icon fill */
+}
+
+/* Icon Buttons */
+.icon-btn,
+.btn-icon {
+    width: 36px;
+    height: 36px;
+    background: var(--bg-gray);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    color: var(--text);
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+.icon-btn:hover,
+.btn-icon:hover {
+    background: #e5e7eb;
+}
+
+.icon-btn svg,
+.btn-icon svg {
+    width: 18px;
+    height: 18px;
+    stroke: currentColor;
+    fill: none;
+}
+
+/* Content Area */
+.content {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+}
+
+.transcript-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: white;
+    margin: 1rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    overflow: hidden;
+}
+
+.panel-header {
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.panel-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.panel-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.panel-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1.5rem;
+    background: white;
+}
+
+/* Transcript Segments - Minimal Style */
+.transcript-segment {
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    border-radius: 0;
+    padding: 1rem 0;
+    margin-bottom: 0;
+}
+
+.transcript-segment:last-child {
+    border-bottom: none;
+}
+
+.segment-meta {
+    display: none;
+    /* Ẩn timestamp và segment ID để gọn hơn */
+}
+
+.timestamp {
+    font-variant-numeric: tabular-nums;
+    color: var(--primary);
+    font-weight: 600;
+}
+
+.vi-text {
+    font-size: 1rem;
+    line-height: 1.6;
+    color: #000000;
+    /* Final: Pure black */
+    font-weight: 600;
+    transition: color 0.2s ease;
+}
+
+/* Tiếng Anh - TransyncAI style */
+.en-text,
+.transcript-en {
+    font-size: 0.95rem;
+    line-height: 1.6;
+    color: #4A4A4A;
+    /* Slightly lighter than Vietnamese */
+    font-style: normal;
+    /* No italic for cleaner look */
+    border-left: 3px solid var(--border);
+    padding-left: 10px;
+    margin-top: 8px;
+    display: block;
+    font-weight: 400;
+    transition: color 0.2s ease;
+}
+
+/* TransyncAI Style: Partial = Gray, Final = Black */
+.transcript-segment.partial .vi-text {
+    color: #4A4A4A;
+    /* Gray - đang xử lý */
+    font-weight: 400;
+}
+
+.transcript-segment.partial .en-text {
+    color: #6B7280;
+    /* Lighter gray for translation in progress */
+}
+
+
+/* Font Size Classes */
+.font-sm .vi-text {
+    font-size: 0.9rem;
+}
+
+.font-sm .en-text {
+    font-size: 0.85rem;
+}
+
+.font-lg .vi-text {
+    font-size: 1.2rem;
+}
+
+.font-lg .en-text {
+    font-size: 1.1rem;
+}
+
+.font-xl .vi-text {
+    font-size: 1.4rem;
+}
+
+.font-xl .en-text {
+    font-size: 1.3rem;
+}
+
+/* Empty State */
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 4rem 2rem;
+    text-align: center;
+    color: var(--text-light);
+}
+
+.empty-state p {
+    margin: 0.25rem 0;
+}
+
+/* Sidebar (Index Page) */
+.sidebar {
+    width: 320px;
+    background: white;
+    border-left: 1px solid var(--border);
+    display: none;
+    /* Hidden by default on mobile if needed */
+    flex-direction: column;
+}
+
+/* Force flex for desktop sidebar */
+@media (min-width: 1024px) {
+    .sidebar {
+        display: flex;
+    }
+}
+
+.sidebar.active {
+    display: flex;
+}
+
+.sidebar-header {
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.sidebar-header h3 {
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.sidebar-link {
+    font-size: 0.9rem;
+    color: var(--primary);
+    text-decoration: none;
+}
+
+.sidebar-link:hover {
+    text-decoration: underline;
+}
+
+.sidebar-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1rem;
+}
+
+/* Recording Card */
+.recording-card {
+    background: var(--bg-gray);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+    margin-bottom: 0.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+
+.recording-card:hover {
+    background: #f3f4f6;
+}
+
+.recording-card .recording-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.recording-date {
+    font-size: 0.85rem;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.recording-duration {
+    font-size: 0.75rem;
+    color: var(--text-light);
+    font-variant-numeric: tabular-nums;
+}
+
+.recording-card-actions {
+    display: flex;
+    gap: 0.25rem;
+    flex-shrink: 0;
+}
+
+.btn-view-small,
+.btn-delete-small {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.btn-view-small {
+    background: var(--primary);
+    color: white;
+}
+
+.btn-view-small:hover {
+    background: var(--primary-dark);
+}
+
+.btn-delete-small {
+    background: transparent;
+    color: var(--text-light);
+}
+
+.btn-delete-small:hover {
+    background: #fee2e2;
+    color: var(--danger);
+}
+
+.recording-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.btn-view {
+    width: 100%;
+    padding: 0.5rem;
+    background: white;
+    border: 1px solid var(--primary);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: var(--primary);
+    transition: all 0.2s;
+}
+
+.btn-view:hover {
+    background: var(--primary);
+    color: white;
+}
+
+/* Modal */
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.modal-overlay.active {
+    display: flex;
+}
+
+.modal {
+    background: white;
+    border-radius: 12px;
+    max-width: 500px;
+    width: 90%;
+    max-height: 80vh;
+    overflow: hidden;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+}
+
+.modal-header {
+    padding: 1.5rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.modal-header h3 {
+    font-size: 1.25rem;
+    font-weight: 600;
+}
+
+.modal-close {
+    width: 32px;
+    height: 32px;
+    background: transparent;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    border-radius: 6px;
+    color: var(--text-light);
+}
+
+.modal-close:hover {
+    background: var(--bg-gray);
+}
+
+.modal-body {
+    padding: 1.5rem;
+}
+
+.modal-footer {
+    padding: 1rem 1.5rem;
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 0.75rem;
+    justify-content: flex-end;
+}
+
+/* Form */
+.form-group {
+    margin-bottom: 1.5rem;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+    font-size: 0.9rem;
+}
+
+.form-group input,
+.form-group textarea {
+    width: 100%;
+    padding: 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 0.95rem;
+}
+
+.form-group input:focus,
+.form-group textarea:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+}
+
+.form-group textarea {
+    min-height: 100px;
+    resize: vertical;
+}
+
+/* Buttons */
+.btn {
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-primary {
+    background: var(--primary);
+    color: white;
+    border: none;
+}
+
+.btn-primary:hover {
+    background: var(--primary-dark);
+}
+
+.btn-secondary {
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--border);
+}
+
+.btn-secondary:hover {
+    background: var(--bg-gray);
+}
+
+/* Notification */
+.notification {
+    position: fixed;
+    bottom: 2rem;
+    right: 2rem;
+    background: var(--text);
+    color: white;
+    padding: 1rem 1.5rem;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    display: none;
+    animation: slideIn 0.3s;
+    z-index: 2000;
+}
+
+.notification.active {
+    display: block;
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateY(1rem);
+        opacity: 0;
+    }
+
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--bg-gray);
+}
+
+::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+}
+
+
+/* 👇👇 START: CSS CHO TRANG RECORDINGS (RECORDINGS.HTML) 👇👇 */
+.recordings-page {
+    display: flex;
+    height: 100vh;
+    background: var(--bg-gray);
+}
+
+.recordings-sidebar {
+    width: 340px;
+    background: white;
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+}
+
+.recordings-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.5rem;
+}
+
+.recording-item {
+    padding: 1rem;
+    margin-bottom: 0.5rem;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.2s;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.recording-item:hover,
+.recording-item.active {
+    background: var(--bg-gray);
+}
+
+.recording-info {
+    flex: 1;
+}
+
+.recording-actions {
+    position: relative;
+}
+
+.menu-btn {
+    width: 28px;
+    height: 28px;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-light);
+}
+
+.menu-btn:hover {
+    background: var(--bg-gray);
+}
+
+.context-menu {
+    position: absolute;
+    right: 0;
+    top: 100%;
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    min-width: 120px;
+    display: none;
+    z-index: 100;
+}
+
+.context-menu.active {
+    display: block;
+}
+
+.context-menu-item {
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    font-size: 0.875rem;
+    transition: background 0.2s;
+}
+
+.context-menu-item:hover {
+    background: var(--bg-gray);
+}
+
+.context-menu-item.delete {
+    color: var(--danger);
+}
+
+.recordings-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.content-header {
+    background: white;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.content-title-group h2 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+}
+
+.content-subtitle {
+    font-size: 0.875rem;
+    color: var(--text-light);
+}
+
+.back-to-live {
+    font-size: 0.875rem;
+    color: var(--primary);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.back-to-live:hover {
+    text-decoration: underline;
+}
+
+.content-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1.5rem;
+    background: var(--bg-gray);
+}
+
+.transcript-container-full {
+    background: white;
+    border-radius: 8px;
+    padding: 2rem;
+    min-height: 100%;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    border: 1px solid var(--border);
+}
+
+.transcript-block {
+    margin-bottom: 1.5rem;
+}
+
+.transcript-timestamp {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--primary);
+    margin-bottom: 0.5rem;
+}
+
+/* Responsive */
+@media (max-width: 1024px) {
+    .sidebar {
+        position: fixed;
+        right: 0;
+        top: 0;
+        bottom: 0;
+        z-index: 100;
+        box-shadow: -4px 0 12px rgba(0, 0, 0, 0.1);
+    }
+}
+
+/* frontend/style.css */
+@media (max-width: 1024px) {
+    .sidebar {
+        position: fixed;
+        right: 0;
+        top: 60px;
+        /* Chiều cao toolbar */
+        bottom: 0;
+        z-index: 100;
+        box-shadow: -4px 0 12px rgba(0, 0, 0, 0.1);
+        transform: translateX(100%);
+        /* Mặc định ẩn sang phải */
+        transition: transform 0.3s ease;
+        display: flex !important;
+        /* Force flex để override display:none */
+    }
+
+    .sidebar.active {
+        transform: translateX(0);
+        /* Trượt ra khi active */
+    }
+}
+
+@media (max-width: 768px) {
+    .toolbar {
+        flex-wrap: wrap;
+    }
+
+    .toolbar-center {
+        order: 3;
+        flex: 1 0 100%;
+        margin-top: 1rem;
+    }
+}

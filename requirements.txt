@@ -1,26 +1,27 @@
-# Core
+# Core ML Framework
 torch>=2.0.0
-numpy>=1.24.0
-
-# ASR Model
-transformers>=4.36.0
+torchaudio>=2.0.0
+transformers>=4.35.0 
 accelerate>=0.25.0
-sentencepiece
-protobuf
 
-# Audio Processing
-sounddevice
-soundfile
-scipy
-noisereduce
+# Model Format & Tokenizers 
+safetensors>=0.4.0    
+protobuf>=3.20.0      
 
-# Server
-fastapi
-uvicorn[standard]
-websockets
+# ASR & Audio
+soundfile>=0.12.0
+numpy>=1.24.0
+scipy>=1.11.0
 
-# Translation
-deep-translator
+# GPU Deployment
+modal>=0.64.0
 
-# Deployment
-modal
+# Web Server
+fastapi>=0.104.0
+uvicorn>=0.24.0
+websockets>=12.0
+aiofiles>=23.0.0
+python-multipart>=0.0.6 
+
+# Utilities
+python-dotenv>=1.0.0

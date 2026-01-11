@@ -107,8 +107,31 @@ body {
     z-index: 100;
 }
 
+.dropdown-menu.wide {
+    min-width: 280px;
+}
+
 .dropdown-menu.active {
     display: block;
+}
+
+.dropdown-section {
+    padding: 0.5rem 0;
+}
+
+.dropdown-label {
+    padding: 0.5rem 1rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.dropdown-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 0.25rem 0;
 }
 
 .dropdown-item {
@@ -116,6 +139,9 @@ body {
     cursor: pointer;
     transition: background 0.2s;
     font-size: 0.9rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .dropdown-item:hover {
@@ -128,6 +154,11 @@ body {
 
 .dropdown-item:last-child {
     border-radius: 0 0 6px 6px;
+}
+
+.dropdown-item.mic-item {
+    padding-left: 2rem;
+    font-size: 0.85rem;
 }
 
 .audio-meter-horizontal {
@@ -184,8 +215,15 @@ body {
 }
 
 @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.85; }
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.85;
+    }
 }
 
 .record-btn svg {
@@ -314,12 +352,29 @@ body {
     font-weight: 500;
 }
 
-.font-sm .vi-text { font-size: 0.9rem; }
-.font-sm .en-text { font-size: 0.85rem; }
-.font-lg .vi-text { font-size: 1.2rem; }
-.font-lg .en-text { font-size: 1.1rem; }
-.font-xl .vi-text { font-size: 1.4rem; }
-.font-xl .en-text { font-size: 1.3rem; }
+.font-sm .vi-text {
+    font-size: 0.9rem;
+}
+
+.font-sm .en-text {
+    font-size: 0.85rem;
+}
+
+.font-lg .vi-text {
+    font-size: 1.2rem;
+}
+
+.font-lg .en-text {
+    font-size: 1.1rem;
+}
+
+.font-xl .vi-text {
+    font-size: 1.4rem;
+}
+
+.font-xl .en-text {
+    font-size: 1.3rem;
+}
 
 .empty-state {
     display: flex;
@@ -623,6 +678,7 @@ body {
         transform: translateY(1rem);
         opacity: 0;
     }
+
     to {
         transform: translateY(0);
         opacity: 1;

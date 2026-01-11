@@ -21,7 +21,7 @@ image = (
         "accelerate>=0.25.0",
         "sentencepiece>=0.1.99",
     )
-    .pip_install("openai-whisper>=20231117")
+    .pip_install("faster-whisper>=1.0.0", "ctranslate2>=4.0.0")
     .pip_install(
         "fastapi>=0.104.0",
         "uvicorn>=0.24.0",

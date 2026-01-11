@@ -11,6 +11,7 @@ from backend.config import (
 )
 from backend.asr import WhisperASR, StreamingASRProcessor
 from backend.translation import NLLBTranslator
+from backend.local_agreement import LocalAgreementTracker, ConfidenceAdaptiveCommit
 
 
 class ASRService:
@@ -69,6 +70,45 @@ class ASRSession:
         # Context memory
         self.context_keywords = []
         self.transcript_history = []
+        
+        # LocalAgreement for stable commits
+        self.agreement_tracker = LocalAgreementTracker(min_agreement=2, high_conf_threshold=0.85)
+        self.commit_policy = ConfidenceAdaptiveCommit()
+
+    def _is_hallucination(self, text: str, audio_duration: float, confidence: float) -> bool:
+        """Detect if text is likely a hallucination"""
+        if not text or len(text.strip()) < 3:
+            return True
+        
+        text_lower = text.lower().strip()
+        
+        # Known hallucination patterns (Whisper artifacts)
+        hallucination_patterns = [
+            "subscribe", "đăng ký kênh", "like", "comment",
+            "ghiền mì gõ", "la la school", "kênh youtube",
+            "cảm ơn đã xem", "thank you for watching",
+            "music", "♪", "nhạc", "[music]",
+        ]
+        
+        for pattern in hallucination_patterns:
+            if pattern in text_lower:
+                print(f"[Filter] Known pattern: {pattern}")
+                return True
+        
+        # Low confidence filter
+        if confidence < 0.4:
+            print(f"[Filter] Low confidence: {confidence:.2f}")
+            return True
+        
+        # Words per second check (normal speech ~2-4 words/sec, Vietnamese can be faster)
+        words = len(text.split())
+        if audio_duration > 0.5:
+            wps = words / audio_duration
+            if wps > 7:  # Too many words for audio length
+                print(f"[Filter] High WPS: {wps:.1f}")
+                return True
+        
+        return False
 
     async def handle_incoming(self, message: str):
         try:
@@ -183,7 +223,14 @@ class ASRSession:
         if should_finalize and len(self.processor.audio_buffer) > 0:
             print(f"[VAD] Finalize ({reason})")
             
+            audio_duration = buffer_duration
             text, conf = await loop.run_in_executor(None, self.processor.process_final)
+            
+            # Check for hallucination
+            if text and self._is_hallucination(text, audio_duration, conf):
+                print(f"[Filter] Skipped hallucination: {text[:50]}...")
+                text = ""
+            
             if text:
                 self.segment_id += 1
                 self.transcript_history.append(text)
@@ -207,10 +254,10 @@ class ASRSession:
             self.last_partial_text = ""
             self.buffer_start_time = time.time()
             
-        elif is_speech and (now - self.last_partial_time > 1.5) and buffer_duration > 1.5:
+        elif is_speech and (now - self.last_partial_time > 0.8) and buffer_duration > 1.0:
             text, conf = await loop.run_in_executor(None, self.processor.process_partial)
             
-            if text and len(text) > len(self.last_partial_text) + 10:
+            if text and len(text) > len(self.last_partial_text) + 5:
                 self.last_partial_text = text
                 self.last_partial_time = now
                 

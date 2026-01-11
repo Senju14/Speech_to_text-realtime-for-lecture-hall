@@ -1,6 +1,5 @@
 import numpy as np
 import logging
-import torch
 
 logger = logging.getLogger(__name__)
 
@@ -8,28 +7,35 @@ SAMPLE_RATE = 16000
 
 
 class WhisperASR:
+    """Faster-Whisper ASR using CTranslate2 backend"""
+    
     def __init__(self, model_size="large-v3", language=None, device="cuda", cache_dir=None):
         self.model_size = model_size
         self.language = language
         self.device = device
         self.cache_dir = cache_dir
         self.model = None
+        self.prompt = None
 
     def load_model(self):
         if self.model is not None:
             return
         
-        import whisper
+        from faster_whisper import WhisperModel
         
-        logger.info(f"Loading Whisper: {self.model_size}")
-        self.model = whisper.load_model(
+        logger.info(f"Loading Faster-Whisper: {self.model_size}")
+        
+        # Use float16 on GPU for speed
+        compute_type = "float16" if self.device == "cuda" else "int8"
+        
+        self.model = WhisperModel(
             self.model_size,
             device=self.device,
-            download_root=self.cache_dir
+            compute_type=compute_type,
+            download_root=self.cache_dir,
         )
-        logger.info("Whisper loaded")
+        logger.info("Faster-Whisper loaded")
 
-    @torch.inference_mode()
     def transcribe(self, audio: np.ndarray, prompt: str = None) -> tuple:
         if self.model is None:
             self.load_model()
@@ -37,71 +43,86 @@ class WhisperASR:
         if len(audio) < 8000:
             return "", 0.0
         
-        result = self.model.transcribe(
+        # Use provided prompt or instance prompt
+        initial_prompt = prompt or self.prompt
+        
+        segments, info = self.model.transcribe(
             audio,
             language=self.language if self.language else None,
             task="transcribe",
-            fp16=True,
-            temperature=0.0,
-            best_of=1,
             beam_size=5,
+            best_of=1,
+            temperature=0.0,
+            vad_filter=True,
+            vad_parameters=dict(
+                min_silence_duration_ms=500,
+                speech_pad_ms=200,
+            ),
             no_speech_threshold=0.6,
             compression_ratio_threshold=2.4,
             condition_on_previous_text=False,
-            initial_prompt=prompt,
+            initial_prompt=initial_prompt,
             without_timestamps=True,
         )
         
-        text = result.get("text", "").strip()
+        # Collect all segments
+        text_parts = []
+        total_prob = 0.0
+        seg_count = 0
         
-        segments = result.get("segments", [])
+        for segment in segments:
+            text_parts.append(segment.text.strip())
+            total_prob += segment.avg_logprob
+            seg_count += 1
+        
+        text = " ".join(text_parts).strip()
+        
+        # Calculate confidence
         conf = 0.0
-        if segments:
-            avg_logprob = sum(s.get("avg_logprob", 0) for s in segments) / len(segments)
-            no_speech = sum(s.get("no_speech_prob", 0) for s in segments) / len(segments)
-            
-            if no_speech > 0.6 or avg_logprob < -1.0:
-                return "", 0.0
-            
-            conf = min(1.0, max(0.0, 1.0 + avg_logprob))
+        if seg_count > 0:
+            avg_logprob = total_prob / seg_count
+            conf = min(1.0, max(0.0, 1.0 + avg_logprob / 2))
         
         return text, conf
 
 
 class StreamingASRProcessor:
-    def __init__(self, asr: WhisperASR, context_size: int = 2):
+    """Streaming processor for audio chunks"""
+    
+    def __init__(self, asr: WhisperASR, context_size: int = 3):
         self.asr = asr
-        self.audio_buffer = np.array([], dtype=np.float32)
-        self.confirmed_text = []
         self.context_size = context_size
+        self.audio_buffer = np.array([], dtype=np.float32)
+        self.context_history = []
 
     def init(self):
         self.audio_buffer = np.array([], dtype=np.float32)
-        self.confirmed_text = []
-
-    def get_context(self) -> str:
-        if not self.confirmed_text:
-            return None
-        return " ".join(self.confirmed_text[-self.context_size:])
+        self.context_history = []
 
     def insert_audio(self, audio: np.ndarray):
-        self.audio_buffer = np.append(self.audio_buffer, audio)
-        if len(self.audio_buffer) > 480000:
-            self.audio_buffer = self.audio_buffer[-480000:]
+        self.audio_buffer = np.concatenate([self.audio_buffer, audio])
 
     def process_partial(self) -> tuple:
-        if len(self.audio_buffer) < 8000:
+        if len(self.audio_buffer) < SAMPLE_RATE:
             return "", 0.0
-        return self.asr.transcribe(self.audio_buffer, prompt=self.get_context())
+        
+        text, conf = self.asr.transcribe(self.audio_buffer)
+        return text, conf
 
     def process_final(self) -> tuple:
         if len(self.audio_buffer) < 4000:
+            self.audio_buffer = np.array([], dtype=np.float32)
             return "", 0.0
-            
-        text, conf = self.asr.transcribe(self.audio_buffer, prompt=self.get_context())
+        
+        # Build prompt from context history
+        prompt = " ".join(self.context_history[-self.context_size:]) if self.context_history else None
+        
+        text, conf = self.asr.transcribe(self.audio_buffer, prompt)
         
         if text:
-            self.confirmed_text.append(text)
-            
+            self.context_history.append(text)
+            if len(self.context_history) > self.context_size * 2:
+                self.context_history = self.context_history[-self.context_size:]
+        
         self.audio_buffer = np.array([], dtype=np.float32)
         return text, conf

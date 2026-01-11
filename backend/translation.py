@@ -32,14 +32,13 @@ class NLLBTranslator:
             src_lang=self.src_lang
         )
         
+        # Load directly to GPU to avoid meta tensor issue
         self.model = AutoModelForSeq2SeqLM.from_pretrained(
             self.model_name,
             cache_dir=self.cache_dir,
-            torch_dtype=torch.float16 if self.device == "cuda" else torch.float32
+            dtype=torch.float16,
+            device_map="auto",
         )
-        
-        if self.device == "cuda" and torch.cuda.is_available():
-            self.model = self.model.to(self.device)
         
         self.model.eval()
         self.is_loaded = True
@@ -61,8 +60,9 @@ class NLLBTranslator:
                 max_length=512
             )
             
-            if self.device == "cuda":
-                inputs = {k: v.to(self.device) for k, v in inputs.items()}
+            # Move inputs to same device as model
+            device = next(self.model.parameters()).device
+            inputs = {k: v.to(device) for k, v in inputs.items()}
             
             tgt_lang_id = self.tokenizer.convert_tokens_to_ids(self.tgt_lang)
             

@@ -7,7 +7,7 @@ MODAL_CONTAINER_IDLE_TIMEOUT = 120
 
 # Whisper
 WHISPER_MODEL = "large-v3"
-WHISPER_LANGUAGE = None  # Auto-detect
+WHISPER_LANGUAGE = "vi"  # Force Vietnamese detection
 ASR_DEVICE = "cuda"
 
 # VAD (Energy-based)

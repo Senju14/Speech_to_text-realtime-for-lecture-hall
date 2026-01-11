@@ -31,8 +31,8 @@ class ASRApp {
             const micList = document.getElementById('micList');
             if (micList && mics.length > 0) {
                 micList.innerHTML = mics.map((mic, i) => `
-                    <div class="dropdown-item" data-source="microphone" data-device="${mic.deviceId}">
-                        🎤 ${mic.label}
+                    <div class="dropdown-item mic-item" data-source="microphone" data-device="${mic.deviceId}">
+                        ${mic.label}
                     </div>
                 `).join('');
             }

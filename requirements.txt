@@ -1,7 +1,8 @@
 # Core ML
 torch
 torchaudio
-openai-whisper
+faster-whisper
+ctranslate2
 transformers
 accelerate
 sentencepiece
@@ -12,8 +13,6 @@ protobuf
 numpy
 scipy
 soundfile
-librosa
-onnxruntime
 
 # Deployment & Web
 modal
@@ -24,9 +23,5 @@ aiofiles
 python-multipart
 python-dotenv
 
-# Evaluation & Testing
-jiwer
-sacrebleu
+# Dev & Testing
 pytest
-pytest-asyncio
-httpx

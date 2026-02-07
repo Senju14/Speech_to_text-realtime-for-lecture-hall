@@ -30,16 +30,7 @@ function float32ToInt16(float32) {
     return int16;
 }
 
-function int16ToBase64(int16Array) {
-    const bytes = new Uint8Array(int16Array.buffer);
-    let binary = '';
-    const chunkSize = 8192;
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-        const chunk = bytes.subarray(i, i + chunkSize);
-        binary += String.fromCharCode.apply(null, chunk);
-    }
-    return btoa(binary);
-}
+// Base64 conversion removed - now sending raw ArrayBuffer for ~33% less bandwidth
 
 function calculateRMS(buffer) {
     if (!buffer || buffer.length === 0) return 0;
@@ -207,10 +198,11 @@ class AudioManager {
         this.pendingBuffer = [];
 
         const int16 = float32ToInt16(float32);
-        const base64 = int16ToBase64(int16);
-
-        if (this.onAudioData && base64.length > 0) {
-            this.onAudioData(base64);
+        
+        // Send raw ArrayBuffer (binary) instead of Base64 string
+        // This reduces payload size by ~33%
+        if (this.onAudioData && int16.length > 0) {
+            this.onAudioData(int16.buffer);
         }
     }
 

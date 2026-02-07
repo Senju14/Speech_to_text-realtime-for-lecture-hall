@@ -30,6 +30,7 @@ class SocketManager {
 
             const url = getWebSocketURL();
             this.ws = new WebSocket(url);
+            this.ws.binaryType = 'arraybuffer';  // Enable binary messages
 
             const timeout = setTimeout(() => {
                 if (this.ws && this.ws.readyState !== WebSocket.OPEN) {
@@ -96,6 +97,17 @@ class SocketManager {
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
         try {
             this.ws.send(JSON.stringify({ type, ...data }));
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    sendBinary(arrayBuffer) {
+        // Send raw audio bytes directly (no JSON wrapper)
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
+        try {
+            this.ws.send(arrayBuffer);
             return true;
         } catch (e) {
             return false;

@@ -1,9 +1,14 @@
 """
 NLLB Translation - No Language Left Behind
 
-Uses facebook/nllb-200-3.3B for Vietnamese to English translation.
+Optimized for real-time Vietnamese to English translation.
 
-Reference: https://huggingface.co/facebook/nllb-200-3.3B
+Model options:
+- distilled-600M: Fast, low VRAM (recommended for real-time)
+- 1.3B: Balanced quality/speed
+- 3.3B: Best quality, use with 8-bit quantization
+
+Reference: https://huggingface.co/facebook/nllb-200-distilled-600M
 """
 
 import logging
@@ -12,7 +17,8 @@ import torch
 
 from src.config import (
     NLLB_MODEL, NLLB_SRC_LANG, NLLB_TGT_LANG,
-    NLLB_DEVICE, NLLB_MAX_LENGTH, NLLB_NUM_BEAMS, NLLB_CACHE_DIR
+    NLLB_DEVICE, NLLB_MAX_LENGTH, NLLB_NUM_BEAMS, NLLB_CACHE_DIR,
+    NLLB_USE_8BIT
 )
 
 logger = logging.getLogger(__name__)
@@ -40,13 +46,18 @@ class NLLBTranslator:
         self.is_loaded = False
     
     def load_model(self):
-        """Load NLLB model and tokenizer"""
+        """
+        Load NLLB model and tokenizer
+        
+        Supports 8-bit quantization for large models (3.3B) to reduce VRAM.
+        Requires: pip install bitsandbytes
+        """
         if self.is_loaded:
             return
         
         from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
         
-        logger.info(f"Loading NLLB: {self.model_name}")
+        logger.info(f"Loading NLLB: {self.model_name} (8-bit: {NLLB_USE_8BIT})")
         
         self.tokenizer = AutoTokenizer.from_pretrained(
             self.model_name,
@@ -54,17 +65,43 @@ class NLLBTranslator:
             src_lang=self.src_lang
         )
         
-        self.model = AutoModelForSeq2SeqLM.from_pretrained(
-            self.model_name,
-            cache_dir=self.cache_dir,
-            torch_dtype=torch.float16,
-            device_map="auto",
-        )
+        # Model loading with optional 8-bit quantization
+        if NLLB_USE_8BIT:
+            try:
+                from transformers import BitsAndBytesConfig
+                
+                quantization_config = BitsAndBytesConfig(
+                    load_in_8bit=True,
+                    llm_int8_threshold=6.0,
+                )
+                
+                self.model = AutoModelForSeq2SeqLM.from_pretrained(
+                    self.model_name,
+                    cache_dir=self.cache_dir,
+                    quantization_config=quantization_config,
+                    device_map="auto",
+                )
+                logger.info("NLLB loaded with 8-bit quantization")
+            except ImportError:
+                logger.warning("bitsandbytes not installed, falling back to float16")
+                self.model = AutoModelForSeq2SeqLM.from_pretrained(
+                    self.model_name,
+                    cache_dir=self.cache_dir,
+                    torch_dtype=torch.float16,
+                    device_map="auto",
+                )
+        else:
+            self.model = AutoModelForSeq2SeqLM.from_pretrained(
+                self.model_name,
+                cache_dir=self.cache_dir,
+                torch_dtype=torch.float16,
+                device_map="auto",
+            )
         
         self.model.eval()
         self.is_loaded = True
         
-        logger.info("NLLB loaded")
+        logger.info("NLLB ready")
     
     def translate(self, text: str, max_length: int = NLLB_MAX_LENGTH) -> str:
         """

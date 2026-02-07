@@ -56,9 +56,10 @@ class ASRApp {
     }
 
     setupAudioCallbacks() {
-        this.audioMgr.onAudioData = (b64) => {
+        // Receives raw ArrayBuffer from AudioManager (binary, not base64)
+        this.audioMgr.onAudioData = (arrayBuffer) => {
             if (this.isRecording && this.socketMgr.isConnected()) {
-                this.socketMgr.send('audio', { audio: b64 });
+                this.socketMgr.sendBinary(arrayBuffer);
             }
         };
         this.audioMgr.onLevelUpdate = (rms) => {

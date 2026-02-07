@@ -3,6 +3,10 @@ ASR Session Handler
 
 Manages WebSocket sessions for real-time speech recognition.
 Each client connection gets its own ASRSession instance.
+
+Optimizations:
+- Binary audio input: Receives raw Int16 bytes (33% smaller than Base64)
+- Async streaming: Sends ASR result immediately, translation follows async
 """
 
 import json
@@ -21,7 +25,7 @@ from src.config import (
 from src.asr import WhisperXASR
 from src.vad import SileroVAD
 from src.translation import NLLBTranslator
-from src.utils import decode_audio_chunk
+from src.utils import decode_audio_chunk, decode_audio_bytes
 from src.session.filters import HallucinationFilter
 
 logger = logging.getLogger(__name__)
@@ -141,7 +145,7 @@ class ASRSession:
         }))
     
     async def _handle_audio(self, data: dict):
-        """Process incoming audio chunk"""
+        """Process incoming audio chunk (legacy Base64 path)"""
         if not self.is_recording:
             return
         
@@ -149,40 +153,63 @@ class ASRSession:
             # Decode audio from base64
             audio_b64 = data.get("audio", "")
             audio_chunk = decode_audio_chunk(audio_b64)
-            
-            if len(audio_chunk) == 0:
-                return
-            
-            # Append to buffer
-            self.audio_buffer = np.concatenate([self.audio_buffer, audio_chunk])
-            
-            # Check VAD
-            has_speech = self.vad.is_speech(audio_chunk)
-            current_time = time.time()
-            
-            if has_speech:
-                self.last_speech_time = current_time
-            
-            # Calculate durations
-            buffer_duration = len(self.audio_buffer) / SAMPLE_RATE
-            silence_duration = current_time - self.last_speech_time
-            
-            # Check finalize conditions
-            should_finalize = False
-            reason = ""
-            
-            if buffer_duration >= MAX_BUFFER_DURATION:
-                should_finalize = True
-                reason = f"max {buffer_duration:.1f}s"
-            elif silence_duration >= MIN_SILENCE_DURATION and buffer_duration >= MIN_SEGMENT_DURATION:
-                should_finalize = True
-                reason = f"silence {silence_duration:.1f}s"
-            
-            if should_finalize:
-                await self._finalize_segment(reason)
+            await self._process_audio_chunk(audio_chunk)
+    
+    async def handle_binary_audio(self, audio_bytes: bytes):
+        """Process incoming binary audio chunk (optimized path)"""
+        if not self.is_recording:
+            return
+        
+        async with self.lock:
+            # Decode raw Int16 bytes to Float32
+            audio_chunk = decode_audio_bytes(audio_bytes)
+            await self._process_audio_chunk(audio_chunk)
+    
+    async def _process_audio_chunk(self, audio_chunk: np.ndarray):
+        """Common audio processing logic"""
+        if len(audio_chunk) == 0:
+            return
+        
+        # Append to buffer
+        self.audio_buffer = np.concatenate([self.audio_buffer, audio_chunk])
+        
+        # Check VAD
+        has_speech = self.vad.is_speech(audio_chunk)
+        current_time = time.time()
+        
+        if has_speech:
+            self.last_speech_time = current_time
+        
+        # Calculate durations
+        buffer_duration = len(self.audio_buffer) / SAMPLE_RATE
+        silence_duration = current_time - self.last_speech_time
+        
+        # Check finalize conditions
+        should_finalize = False
+        reason = ""
+        
+        if buffer_duration >= MAX_BUFFER_DURATION:
+            should_finalize = True
+            reason = f"max {buffer_duration:.1f}s"
+        elif silence_duration >= MIN_SILENCE_DURATION and buffer_duration >= MIN_SEGMENT_DURATION:
+            should_finalize = True
+            reason = f"silence {silence_duration:.1f}s"
+        
+        if should_finalize:
+            await self._finalize_segment(reason)
     
     async def _finalize_segment(self, reason: str):
-        """Finalize and transcribe current audio buffer"""
+        """
+        Finalize and transcribe current audio buffer
+        
+        Async Streaming Strategy:
+        1. Run ASR (WhisperX)
+        2. Send intermediate result immediately (source text only)
+        3. Fire translation async (non-blocking)
+        4. Send final result when translation completes
+        
+        This reduces perceived latency - user sees source text immediately.
+        """
         min_samples = int(MIN_SEGMENT_DURATION * SAMPLE_RATE)
         
         if len(self.audio_buffer) < min_samples:
@@ -219,16 +246,55 @@ class ASRSession:
             return
         
         self.segment_id += 1
+        current_seg_id = self.segment_id
         
-        print(f"[ASR] #{self.segment_id}: {text[:60]}...")
+        print(f"[ASR] #{current_seg_id}: {text[:60]}...")
         if words:
             print(f"[Words] {len(words)} words aligned")
         
-        # Translate
-        translation = ""
-        mt_time = 0.0
-        
+        # === ASYNC STREAMING: Send ASR result immediately ===
         if self.do_translate and self.service.translator:
+            # Send intermediate result (source only, is_final=False)
+            await self.out_queue.put(json.dumps({
+                "type": "transcript",
+                "segment_id": current_seg_id,
+                "source": text,
+                "target": "",  # Translation pending
+                "is_final": False,
+                "words": words,
+                "timing": {
+                    "asr_ms": int(asr_time * 1000),
+                    "mt_ms": 0,
+                }
+            }))
+            
+            # Fire translation async (non-blocking)
+            asyncio.create_task(
+                self._translate_and_send(current_seg_id, text, words, asr_time)
+            )
+        else:
+            # No translation - send final result directly
+            await self.out_queue.put(json.dumps({
+                "type": "transcript",
+                "segment_id": current_seg_id,
+                "source": text,
+                "target": "",
+                "is_final": True,
+                "words": words,
+                "timing": {
+                    "asr_ms": int(asr_time * 1000),
+                    "mt_ms": 0,
+                }
+            }))
+    
+    async def _translate_and_send(self, segment_id: int, text: str, words: list, asr_time: float):
+        """
+        Async translation task - runs after ASR result is already sent.
+        Sends final update with translation when complete.
+        """
+        loop = asyncio.get_event_loop()
+        
+        try:
             start_time = time.time()
             translation = await loop.run_in_executor(
                 None,
@@ -236,21 +302,37 @@ class ASRSession:
                 text
             )
             mt_time = time.time() - start_time
-            print(f"[MT] #{self.segment_id} ({mt_time:.1f}s): {translation[:50]}...")
-        
-        # Send result
-        await self.out_queue.put(json.dumps({
-            "type": "transcript",
-            "segment_id": self.segment_id,
-            "source": text,
-            "target": translation,
-            "is_final": True,
-            "words": words,
-            "timing": {
-                "asr_ms": int(asr_time * 1000),
-                "mt_ms": int(mt_time * 1000),
-            }
-        }))
+            
+            print(f"[MT] #{segment_id} ({mt_time:.1f}s): {translation[:50]}...")
+            
+            # Send final update with translation
+            await self.out_queue.put(json.dumps({
+                "type": "transcript",
+                "segment_id": segment_id,
+                "source": text,
+                "target": translation,
+                "is_final": True,
+                "words": words,
+                "timing": {
+                    "asr_ms": int(asr_time * 1000),
+                    "mt_ms": int(mt_time * 1000),
+                }
+            }))
+        except Exception as e:
+            logger.error(f"Translation error for segment {segment_id}: {e}")
+            # Send final without translation on error
+            await self.out_queue.put(json.dumps({
+                "type": "transcript",
+                "segment_id": segment_id,
+                "source": text,
+                "target": "",
+                "is_final": True,
+                "words": words,
+                "timing": {
+                    "asr_ms": int(asr_time * 1000),
+                    "mt_ms": 0,
+                }
+            }))
     
     async def _handle_stop(self):
         """Stop recording session"""

@@ -5,6 +5,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ASR Thesis</title>
+  <link rel="icon" type="image/png" href="favicon.png">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -67,9 +68,25 @@
       </header>
 
       <div class="content">
+        <!-- Single Transcript Panel -->
         <div class="transcript-panel">
           <div class="panel-header">
-            <span class="panel-title">Real-time Transcription</span>
+            <!-- Language Dropdown in Panel Header -->
+            <div class="dropdown">
+              <button class="dropdown-btn" id="langBtn">
+                <span id="langText">Vi → En</span>
+                <span class="dropdown-arrow"></span>
+              </button>
+              <div class="dropdown-menu" id="langDropdown">
+                <div class="dropdown-item" data-src="vi" data-tgt="en">Vietnamese → English</div>
+                <div class="dropdown-item" data-src="en" data-tgt="vi">English → Vietnamese</div>
+                <div class="dropdown-divider"></div>
+                <div class="dropdown-item" data-src="vi" data-tgt="">Vietnamese only</div>
+                <div class="dropdown-item" data-src="en" data-tgt="">English only</div>
+                <div class="dropdown-divider"></div>
+                <div class="dropdown-item" data-src="auto" data-tgt="en">Auto-detect</div>
+              </div>
+            </div>
             <div class="panel-actions">
               <button class="btn-icon" id="fontDecrease" title="Smaller">A-</button>
               <button class="btn-icon" id="fontIncrease" title="Larger">A+</button>
@@ -85,21 +102,6 @@
                   <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
                 </svg>
               </button>
-              <div class="dropdown">
-                <button class="btn-icon" id="exportBtn" title="Export">
-                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                    <polyline points="7 10 12 15 17 10"/>
-                    <line x1="12" y1="15" x2="12" y2="3"/>
-                  </svg>
-                </button>
-                <div class="dropdown-menu" id="exportDropdown">
-                  <div class="dropdown-item" data-export="srt">SRT (Subtitles)</div>
-                  <div class="dropdown-item" data-export="vtt">VTT (WebVTT)</div>
-                  <div class="dropdown-item" data-export="txt">TXT (Plain text)</div>
-                  <div class="dropdown-item" data-export="json">JSON</div>
-                </div>
-              </div>
               <button class="btn-icon" id="copyBtn" title="Copy">
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
                   <rect x="9" y="9" width="13" height="13" rx="2"/>
@@ -108,7 +110,6 @@
               </button>
             </div>
           </div>
-          
           <div class="panel-content" id="panelContent">
             <div class="empty-state">
               <p>Click the record button to start</p>
@@ -120,7 +121,7 @@
         <aside class="sidebar" id="sidebar">
           <div class="sidebar-header">
             <h3>History</h3>
-            <a href="recordings.html" class="sidebar-link">View All</a>
+            <a href="recordings.html" class="btn btn-secondary btn-sm">View All</a>
           </div>
           <div class="sidebar-content" id="recordingsList">
             <div class="empty-state">

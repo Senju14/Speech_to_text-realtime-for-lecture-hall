@@ -65,7 +65,15 @@ class RecordingsManager {
                         <div class="context-menu" id="menu-${rec.id}">
                             <div class="context-menu-item" data-action="rename" data-id="${rec.id}">Rename</div>
                             <div class="context-menu-item" data-action="star" data-id="${rec.id}">${rec.starred ? 'Unstar' : 'Star'}</div>
-                            <div class="context-menu-item" data-action="export" data-id="${rec.id}">Export</div>
+                            <div class="context-menu-item has-submenu" data-id="${rec.id}">
+                                Export ▸
+                                <div class="context-submenu">
+                                    <div class="context-menu-item" data-action="export-srt" data-id="${rec.id}">SRT (Subtitles)</div>
+                                    <div class="context-menu-item" data-action="export-vtt" data-id="${rec.id}">VTT (WebVTT)</div>
+                                    <div class="context-menu-item" data-action="export-txt" data-id="${rec.id}">TXT (Plain text)</div>
+                                    <div class="context-menu-item" data-action="export-json" data-id="${rec.id}">JSON (Data)</div>
+                                </div>
+                            </div>
                             <div class="context-menu-item delete" data-action="delete" data-id="${rec.id}">Delete</div>
                         </div>
                     </div>
@@ -128,7 +136,11 @@ class RecordingsManager {
         switch (action) {
             case 'rename': this.showRenameModal(id); break;
             case 'star': this.toggleStar(id); break;
-            case 'export': this.exportRecording(id); break;
+            case 'export': this.exportRecording(id, 'srt'); break;
+            case 'export-srt': this.exportRecording(id, 'srt'); break;
+            case 'export-vtt': this.exportRecording(id, 'vtt'); break;
+            case 'export-txt': this.exportRecording(id, 'txt'); break;
+            case 'export-json': this.exportRecording(id, 'json'); break;
             case 'delete': this.showDeleteModal(id); break;
         }
     }
@@ -142,10 +154,16 @@ class RecordingsManager {
         }
     }
 
-    exportRecording(id) {
+    exportRecording(id, format = 'srt') {
         const rec = this.recordings.find(r => String(r.id) === String(id));
-        if (rec && rec.transcript) {
-            exportSRT(rec.transcript);
+        if (!rec || !rec.transcript) return;
+
+        switch (format) {
+            case 'srt': exportSRT(rec.transcript); break;
+            case 'vtt': exportVTT(rec.transcript); break;
+            case 'txt': exportTXT(rec.transcript); break;
+            case 'json': exportJSON(rec.transcript); break;
+            default: exportSRT(rec.transcript);
         }
     }
 

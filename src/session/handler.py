@@ -1,0 +1,277 @@
+"""
+ASR Session Handler
+
+Manages WebSocket sessions for real-time speech recognition.
+Each client connection gets its own ASRSession instance.
+"""
+
+import json
+import asyncio
+import numpy as np
+import time
+import logging
+from typing import Optional
+
+from src.config import (
+    WHISPER_MODEL, WHISPER_LANGUAGE, ASR_DEVICE,
+    NLLB_MODEL, NLLB_SRC_LANG, NLLB_TGT_LANG, NLLB_DEVICE, NLLB_CACHE_DIR,
+    MIN_SILENCE_DURATION, MAX_BUFFER_DURATION, MIN_SEGMENT_DURATION,
+    SAMPLE_RATE,
+)
+from src.asr import WhisperXASR
+from src.vad import SileroVAD
+from src.translation import NLLBTranslator
+from src.utils import decode_audio_chunk
+from src.session.filters import HallucinationFilter
+
+logger = logging.getLogger(__name__)
+
+
+class ASRService:
+    """
+    ASR Service - manages shared model instances
+    
+    Created once per container, shared across all sessions.
+    """
+    
+    def __init__(self):
+        self.asr: Optional[WhisperXASR] = None
+        self.translator: Optional[NLLBTranslator] = None
+        self.is_initialized = False
+    
+    async def init(self):
+        """Initialize all models"""
+        loop = asyncio.get_event_loop()
+        
+        # Load WhisperX
+        print("[Model] Loading WhisperX...")
+        self.asr = WhisperXASR(
+            model_size=WHISPER_MODEL,
+            language=WHISPER_LANGUAGE,
+            device=ASR_DEVICE,
+        )
+        await loop.run_in_executor(None, self.asr.load_model)
+        
+        # Load NLLB
+        print("[Model] Loading NLLB Translator...")
+        self.translator = NLLBTranslator(
+            model_name=NLLB_MODEL,
+            src_lang=NLLB_SRC_LANG,
+            tgt_lang=NLLB_TGT_LANG,
+            device=NLLB_DEVICE,
+            cache_dir=NLLB_CACHE_DIR,
+        )
+        await loop.run_in_executor(None, self.translator.load_model)
+        
+        self.is_initialized = True
+        print("[Model] All models ready")
+    
+    def create_session(self) -> "ASRSession":
+        """Create a new session for a WebSocket connection"""
+        return ASRSession(self)
+
+
+class ASRSession:
+    """
+    ASR Session - handles one WebSocket connection
+    
+    Manages audio buffering, VAD, transcription, and translation
+    for a single client.
+    """
+    
+    def __init__(self, service: ASRService):
+        self.service = service
+        self.out_queue = asyncio.Queue()
+        
+        # State
+        self.is_recording = False
+        self.lock = asyncio.Lock()
+        self.segment_id = 0
+        
+        # Audio buffer
+        self.audio_buffer = np.array([], dtype=np.float32)
+        self.last_speech_time = 0.0
+        self.session_start_time = 0.0
+        
+        # Config
+        self.src_lang = "vi"
+        self.tgt_lang = "en"
+        self.do_translate = True
+        
+        # Components
+        self.vad = SileroVAD()
+        self.filter = HallucinationFilter()
+    
+    async def handle_incoming(self, message: str):
+        """Handle incoming WebSocket message"""
+        try:
+            data = json.loads(message)
+            msg_type = data.get("type")
+            
+            if msg_type == "start":
+                await self._handle_start(data)
+            elif msg_type == "audio":
+                await self._handle_audio(data)
+            elif msg_type == "stop":
+                await self._handle_stop()
+                
+        except Exception as e:
+            logger.error(f"Error handling message: {e}")
+    
+    async def _handle_start(self, data: dict):
+        """Start recording session"""
+        self.src_lang = data.get("src_lang", "vi")
+        self.tgt_lang = data.get("tgt_lang", "en")
+        self.do_translate = data.get("translate", True)
+        
+        self.is_recording = True
+        self.segment_id = 0
+        self.audio_buffer = np.array([], dtype=np.float32)
+        self.session_start_time = time.time()
+        self.last_speech_time = time.time()
+        
+        self.vad.load_model()
+        self.vad.reset_state()
+        
+        print(f"[Session] Started ({self.src_lang} → {self.tgt_lang})")
+        
+        await self.out_queue.put(json.dumps({
+            "type": "status",
+            "status": "started"
+        }))
+    
+    async def _handle_audio(self, data: dict):
+        """Process incoming audio chunk"""
+        if not self.is_recording:
+            return
+        
+        async with self.lock:
+            # Decode audio from base64
+            audio_b64 = data.get("audio", "")
+            audio_chunk = decode_audio_chunk(audio_b64)
+            
+            if len(audio_chunk) == 0:
+                return
+            
+            # Append to buffer
+            self.audio_buffer = np.concatenate([self.audio_buffer, audio_chunk])
+            
+            # Check VAD
+            has_speech = self.vad.is_speech(audio_chunk)
+            current_time = time.time()
+            
+            if has_speech:
+                self.last_speech_time = current_time
+            
+            # Calculate durations
+            buffer_duration = len(self.audio_buffer) / SAMPLE_RATE
+            silence_duration = current_time - self.last_speech_time
+            
+            # Check finalize conditions
+            should_finalize = False
+            reason = ""
+            
+            if buffer_duration >= MAX_BUFFER_DURATION:
+                should_finalize = True
+                reason = f"max {buffer_duration:.1f}s"
+            elif silence_duration >= MIN_SILENCE_DURATION and buffer_duration >= MIN_SEGMENT_DURATION:
+                should_finalize = True
+                reason = f"silence {silence_duration:.1f}s"
+            
+            if should_finalize:
+                await self._finalize_segment(reason)
+    
+    async def _finalize_segment(self, reason: str):
+        """Finalize and transcribe current audio buffer"""
+        min_samples = int(MIN_SEGMENT_DURATION * SAMPLE_RATE)
+        
+        if len(self.audio_buffer) < min_samples:
+            self.audio_buffer = np.array([], dtype=np.float32)
+            return
+        
+        # Copy and clear buffer
+        audio = self.audio_buffer.copy()
+        self.audio_buffer = np.array([], dtype=np.float32)
+        self.last_speech_time = time.time()
+        
+        print(f"[VAD] Finalize ({reason})")
+        
+        loop = asyncio.get_event_loop()
+        
+        # Transcribe with WhisperX
+        start_time = time.time()
+        result = await loop.run_in_executor(
+            None,
+            self.service.asr.transcribe_segment,
+            audio
+        )
+        asr_time = time.time() - start_time
+        
+        text = result.get("text", "").strip()
+        words = result.get("words", [])
+        
+        if not text:
+            return
+        
+        # Filter hallucinations
+        if self.filter.is_hallucination(text):
+            print(f"[Filter] Skipped: {text[:50]}...")
+            return
+        
+        self.segment_id += 1
+        
+        print(f"[ASR] #{self.segment_id}: {text[:60]}...")
+        if words:
+            print(f"[Words] {len(words)} words aligned")
+        
+        # Translate
+        translation = ""
+        mt_time = 0.0
+        
+        if self.do_translate and self.service.translator:
+            start_time = time.time()
+            translation = await loop.run_in_executor(
+                None,
+                self.service.translator.translate,
+                text
+            )
+            mt_time = time.time() - start_time
+            print(f"[MT] #{self.segment_id} ({mt_time:.1f}s): {translation[:50]}...")
+        
+        # Send result
+        await self.out_queue.put(json.dumps({
+            "type": "transcript",
+            "segment_id": self.segment_id,
+            "source": text,
+            "target": translation,
+            "is_final": True,
+            "words": words,
+            "timing": {
+                "asr_ms": int(asr_time * 1000),
+                "mt_ms": int(mt_time * 1000),
+            }
+        }))
+    
+    async def _handle_stop(self):
+        """Stop recording session"""
+        if not self.is_recording:
+            return
+        
+        self.is_recording = False
+        
+        # Process remaining buffer
+        if len(self.audio_buffer) > int(MIN_SEGMENT_DURATION * SAMPLE_RATE):
+            await self._finalize_segment("stop")
+        
+        print(f"[Session] Stopped | Segments: {self.segment_id}")
+        
+        await self.out_queue.put(json.dumps({
+            "type": "status",
+            "status": "stopped",
+            "segments": self.segment_id,
+        }))
+    
+    async def cleanup(self):
+        """Cleanup session resources"""
+        self.is_recording = False
+        self.audio_buffer = np.array([], dtype=np.float32)

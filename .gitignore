@@ -9,6 +9,7 @@ venv/
 .venv/
 .uv/
 uv.lock
+.python-version
 
 # --- Dependencies & Packages ---
 build/
@@ -44,6 +45,8 @@ models/
 *.pt
 *.bin
 *.safetensors
+*.onnx
+*.ckpt
 
 # Data & Logs
 *.log
@@ -53,6 +56,10 @@ debug_audio/
 *.mp3
 *.m4a
 *.ogg
+*.flac
+
+# Dataset (large files, store on HuggingFace)
+dataset/
 
 # Config & Secrets
 .env
@@ -66,9 +73,16 @@ debug_audio/
 .pytest_cache/
 .coverage
 htmlcov/
+.mypy_cache/
 
 # Research PDFs
 *.pdf
 
 # Gemini artifacts
 .gemini/
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+tmp/

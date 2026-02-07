@@ -1,0 +1,281 @@
+================================================================================
+                    ASR THESIS - NEW ARCHITECTURE (WhisperX)
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              FOLDER STRUCTURE                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+ASR_TEMP/
+├── main.py                     # Modal App entry point (chỉ file này ở root)
+├── pyproject.toml
+├── requirements.txt
+├── README.md
+│
+├── src/                        # Source code chính
+│   ├── __init__.py
+│   │
+│   ├── config/                 # Configuration
+│   │   ├── __init__.py
+│   │   └── settings.py         # All configs (Modal, models, audio params)
+│   │
+│   ├── asr/                    # Automatic Speech Recognition
+│   │   ├── __init__.py
+│   │   └── whisperx_asr.py     # WhisperX wrapper (transcribe + align)
+│   │
+│   ├── vad/                    # Voice Activity Detection
+│   │   ├── __init__.py
+│   │   └── silero_vad.py       # Silero VAD
+│   │
+│   ├── translation/            # Machine Translation
+│   │   ├── __init__.py
+│   │   └── nllb_translator.py  # NLLB-200 3.3B
+│   │
+│   ├── session/                # WebSocket Session Handler
+│   │   ├── __init__.py
+│   │   ├── handler.py          # Main session handler
+│   │   └── filters.py          # Hallucination filters
+│   │
+│   ├── api/                    # FastAPI Routes
+│   │   ├── __init__.py
+│   │   ├── routes.py           # HTTP endpoints
+│   │   └── websocket.py        # WebSocket handler
+│   │
+│   └── utils/                  # Utilities
+│       ├── __init__.py
+│       ├── audio.py            # Audio processing utilities
+│       └── torch_patch.py      # PyTorch 2.6 weights_only fix
+│
+├── frontend/                   # Static web files
+│   ├── index.html
+│   ├── style.css
+│   └── js/
+│       ├── main.js
+│       ├── audio.js
+│       ├── socket.js
+│       ├── ui.js
+│       ├── utils.js
+│       ├── export.js
+│       └── recorder.worklet.js
+│
+├── scripts/                    # Training/evaluation scripts
+│   ├── finetune_vit5.py
+│   ├── finetune_bartpho.py
+│   └── generate_error_pairs.py
+│
+├── test/                       # Tests
+│   ├── streaming_eval.py
+│   └── generate_tables.py
+│
+└── dataset/                    # Local dataset (git-ignored)
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            ARCHITECTURE DIAGRAM                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+                         ┌──────────────────────────────────┐
+                         │         CLIENT (Browser)         │
+                         │  ┌────────────────────────────┐  │
+                         │  │  recorder.worklet.js       │  │
+                         │  │  - 16kHz, Int16 PCM        │  │
+                         │  │  - 100ms chunks            │  │
+                         │  └────────────────────────────┘  │
+                         └──────────────┬───────────────────┘
+                                        │ WebSocket
+                                        │ base64(audio)
+                                        ▼
+┌───────────────────────────────────────────────────────────────────────────────┐
+│                         MODAL CONTAINER (A100 GPU)                            │
+│                                                                               │
+│  ┌─────────────────────────────────────────────────────────────────────────┐  │
+│  │                        SESSION HANDLER                                   │  │
+│  │  ┌─────────────┐  ┌─────────────────────────────────────────────────┐   │  │
+│  │  │ Audio Buffer│  │              Processing Pipeline                │   │  │
+│  │  │             │  │                                                 │   │  │
+│  │  │ - Decode    │  │  ┌───────────┐    ┌───────────┐    ┌─────────┐ │   │  │
+│  │  │   base64    │──▶  │ Silero    │───▶│ WhisperX  │───▶│  NLLB   │ │   │  │
+│  │  │ - int16→f32 │  │  │   VAD     │    │   ASR     │    │  3.3B   │ │   │  │
+│  │  │ - Buffer    │  │  └───────────┘    └───────────┘    └─────────┘ │   │  │
+│  │  │   chunks    │  │       │                │               │       │   │  │
+│  │  └─────────────┘  │       │                │               │       │   │  │
+│  │                   │       ▼                ▼               ▼       │   │  │
+│  │                   │  Detect Speech    Transcribe +    Translate    │   │  │
+│  │                   │  End (silence     Word Align      vi → en      │   │  │
+│  │                   │  > 0.6s)                                       │   │  │
+│  │                   └─────────────────────────────────────────────────┘   │  │
+│  │                                        │                                │  │
+│  │                   ┌────────────────────┼────────────────────┐          │  │
+│  │                   │    Filter Layer    │                    │          │  │
+│  │                   │ - Hallucination    ▼                    │          │  │
+│  │                   │   detection        JSON Response        │          │  │
+│  │                   │ - Length check                          │          │  │
+│  │                   └─────────────────────────────────────────┘          │  │
+│  └─────────────────────────────────────────────────────────────────────────┘  │
+│                                                                               │
+│  ┌─────────────────────────────────────────────────────────────────────────┐  │
+│  │                         MODEL CACHE (/cache)                            │  │
+│  │  ┌─────────────────┐  ┌────────────────────┐  ┌───────────────────────┐ │  │
+│  │  │ WhisperX        │  │ Pyannote VAD       │  │ NLLB-200 3.3B         │ │  │
+│  │  │ large-v3        │  │ (for WhisperX)     │  │ (translation)         │ │  │
+│  │  │ + Alignment     │  │                    │  │                       │ │  │
+│  │  └─────────────────┘  └────────────────────┘  └───────────────────────┘ │  │
+│  │                                                                          │  │
+│  │  ┌─────────────────┐  ┌────────────────────┐                            │  │
+│  │  │ Silero VAD      │  │ wav2vec2-vi        │                            │  │
+│  │  │ (streaming)     │  │ (alignment backup) │                            │  │
+│  │  └─────────────────┘  └────────────────────┘                            │  │
+│  └─────────────────────────────────────────────────────────────────────────┘  │
+│                                                                               │
+└───────────────────────────────────────────────────────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            DATA FLOW                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+1. AUDIO INPUT (Browser → Server)
+   ────────────────────────────────
+   Browser                        Server
+   ┌─────────┐                    ┌─────────────────────────────────────┐
+   │ Mic     │ ──100ms chunks──▶ │ WebSocket receive                    │
+   │ 16kHz   │    Int16 PCM      │ → base64 decode                      │
+   │ Int16   │    base64         │ → np.frombuffer(dtype=int16)         │
+   └─────────┘                    │ → int16.astype(float32) / 32768.0   │
+                                  │ → Buffer append                      │
+                                  └─────────────────────────────────────┘
+
+2. VAD DECISION
+   ─────────────
+   ┌─────────────────┐      ┌─────────────────────────────────────────┐
+   │ Silero VAD      │      │ Finalize Conditions:                    │
+   │ (per chunk)     │ ───▶ │ ① silence_duration > 0.6s + buffer >0.5s│
+   │ P(speech) > 0.5 │      │ ② buffer_duration > 6.0s (force)        │
+   └─────────────────┘      │ ③ stop signal from client               │
+                            └─────────────────────────────────────────┘
+
+3. WHISPERX TRANSCRIPTION
+   ───────────────────────
+   ┌──────────────────┐     ┌──────────────────┐     ┌────────────────┐
+   │ Audio Buffer     │────▶│ WhisperX         │────▶│ WhisperX Align │
+   │ (float32, 16kHz) │     │ large-v3         │     │ wav2vec2-vi    │
+   └──────────────────┘     │ batch_size=1     │     │ word-level     │
+                            │ language="vi"    │     │ timestamps     │
+                            └──────────────────┘     └────────────────┘
+                                    │                        │
+                                    ▼                        ▼
+                            ┌──────────────────────────────────────┐
+                            │ Result:                               │
+                            │ {                                     │
+                            │   "text": "Xin chào các bạn",        │
+                            │   "words": [                          │
+                            │     {"word": "Xin", "start": 0.1, "end": 0.3},
+                            │     {"word": "chào", "start": 0.35, "end": 0.6},
+                            │     ...                               │
+                            │   ]                                   │
+                            │ }                                     │
+                            └──────────────────────────────────────┘
+
+4. HALLUCINATION FILTER
+   ─────────────────────
+   ┌──────────────────────────────────────────────────────────────────┐
+   │ Patterns to reject:                                              │
+   │                                                                  │
+   │ - YouTube artifacts: "subscribe", "đăng ký kênh", "like"        │
+   │ - Sign-offs: "hẹn gặp lại", "cảm ơn đã xem", "bye bye"          │
+   │ - Music markers: "[music]", "♪", "nhạc"                         │
+   │ - Training leakage: "ghiền mì gõ", "la la school"               │
+   │                                                                  │
+   │ Action: Log filtered text, return early (no output)              │
+   └──────────────────────────────────────────────────────────────────┘
+
+5. TRANSLATION (NLLB)
+   ───────────────────
+   ┌─────────────────┐      ┌───────────────────────────────────┐
+   │ Vietnamese text │─────▶│ NLLB-200 3.3B                     │
+   │ "Xin chào"      │      │ vie_Latn → eng_Latn               │
+   └─────────────────┘      │ num_beams=3, max_length=256       │
+                            └───────────────────────────────────┘
+                                            │
+                                            ▼
+                            ┌───────────────────────────────────┐
+                            │ "Hello everyone"                   │
+                            └───────────────────────────────────┘
+
+6. RESPONSE (Server → Browser)
+   ────────────────────────────
+   ┌─────────────────────────────────────────────────────────────────┐
+   │ {                                                                │
+   │   "type": "transcript",                                         │
+   │   "segment_id": 1,                                              │
+   │   "source": "Xin chào các bạn",                                 │
+   │   "target": "Hello everyone",                                   │
+   │   "is_final": true,                                             │
+   │   "words": [...],                                               │
+   │   "timing": {"asr_ms": 150, "mt_ms": 80}                        │
+   │ }                                                                │
+   └─────────────────────────────────────────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            KEY CHANGES (Old → New)                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────┬────────────────────────────────────────────┐
+│ OLD (faster-whisper + wav2vec2)│ NEW (WhisperX)                             │
+├────────────────────────────────┼────────────────────────────────────────────┤
+│ faster-whisper transcribe      │ WhisperX transcribe (batched)              │
+│ wav2vec2 alignment (separate)  │ Built-in alignment (via whisperx.align)    │
+│ Manual VAD preprocessing       │ Pyannote VAD (inside WhisperX)             │
+│ Silero VAD for streaming       │ Silero VAD for streaming (still used)      │
+│ Custom CTC alignment           │ WhisperX alignment with word timestamps    │
+│ Hallucination via local_agree  │ Pattern-based filter (simpler)             │
+├────────────────────────────────┼────────────────────────────────────────────┤
+│ backend/ (flat)                │ src/ (modular)                             │
+│ main.py + main_whisperx.py     │ main.py only                               │
+│ handler.py + handler_whisperx  │ src/session/handler.py                     │
+└────────────────────────────────┴────────────────────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          DEPENDENCIES (Modal Image)                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+# Core
+torch==2.5.1                    # Pinned (PyTorch 2.6 breaks pyannote)
+torchaudio==2.5.1
+
+# ASR
+whisperx                        # Includes faster-whisper, pyannote
+
+# Translation
+transformers>=4.35.0
+accelerate>=0.25.0
+sentencepiece
+
+# Web
+fastapi
+uvicorn
+websockets
+aiofiles
+
+# Audio
+numpy
+scipy
+soundfile
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              USAGE                                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+# Deploy to Modal
+modal deploy main.py
+
+# Local development (serve with hot-reload)
+modal serve main.py
+
+# Access
+https://522h0134-nguyennhathuy--asr-thesis.modal.run
+
+================================================================================

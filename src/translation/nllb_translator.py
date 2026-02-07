@@ -1,24 +1,46 @@
+"""
+NLLB Translation - No Language Left Behind
+
+Uses facebook/nllb-200-3.3B for Vietnamese to English translation.
+
+Reference: https://huggingface.co/facebook/nllb-200-3.3B
+"""
+
 import logging
 from typing import Optional
 import torch
+
+from src.config import (
+    NLLB_MODEL, NLLB_SRC_LANG, NLLB_TGT_LANG,
+    NLLB_DEVICE, NLLB_MAX_LENGTH, NLLB_NUM_BEAMS, NLLB_CACHE_DIR
+)
 
 logger = logging.getLogger(__name__)
 
 
 class NLLBTranslator:
-    def __init__(self, model_name: str = "facebook/nllb-200-3.3B",
-                 src_lang: str = "vie_Latn", tgt_lang: str = "eng_Latn",
-                 device: str = "cuda", cache_dir: Optional[str] = None):
+    """NLLB Machine Translation"""
+    
+    def __init__(
+        self,
+        model_name: str = NLLB_MODEL,
+        src_lang: str = NLLB_SRC_LANG,
+        tgt_lang: str = NLLB_TGT_LANG,
+        device: str = NLLB_DEVICE,
+        cache_dir: Optional[str] = NLLB_CACHE_DIR,
+    ):
         self.model_name = model_name
         self.src_lang = src_lang
         self.tgt_lang = tgt_lang
         self.device = device
         self.cache_dir = cache_dir
+        
         self.model = None
         self.tokenizer = None
         self.is_loaded = False
-
+    
     def load_model(self):
+        """Load NLLB model and tokenizer"""
         if self.is_loaded:
             return
         
@@ -32,19 +54,29 @@ class NLLBTranslator:
             src_lang=self.src_lang
         )
         
-        # Load directly to GPU to avoid meta tensor issue
         self.model = AutoModelForSeq2SeqLM.from_pretrained(
             self.model_name,
             cache_dir=self.cache_dir,
-            dtype=torch.float16,
+            torch_dtype=torch.float16,
             device_map="auto",
         )
         
         self.model.eval()
         self.is_loaded = True
+        
         logger.info("NLLB loaded")
-
-    def translate(self, text: str, max_length: int = 256) -> str:
+    
+    def translate(self, text: str, max_length: int = NLLB_MAX_LENGTH) -> str:
+        """
+        Translate Vietnamese text to English
+        
+        Args:
+            text: Vietnamese text
+            max_length: Max output length
+            
+        Returns:
+            English translation
+        """
         if not text or not text.strip():
             return ""
         
@@ -60,7 +92,7 @@ class NLLBTranslator:
                 max_length=512
             )
             
-            # Move inputs to same device as model
+            # Move to model device
             device = next(self.model.parameters()).device
             inputs = {k: v.to(device) for k, v in inputs.items()}
             
@@ -71,7 +103,7 @@ class NLLBTranslator:
                     **inputs,
                     forced_bos_token_id=tgt_lang_id,
                     max_length=max_length,
-                    num_beams=3,
+                    num_beams=NLLB_NUM_BEAMS,
                     early_stopping=True,
                     do_sample=False
                 )

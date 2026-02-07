@@ -6,8 +6,8 @@ Hệ thống dịch tiếng nói Việt-Anh thời gian thực, sử dụng cho 
 
 ```bash
 # 1. Clone và cài đặt
-git clone https://github.com/Senju14/Speech_to_text-realtime-for-lecture-hall.git
-cd Speech_to_text-realtime-for-lecture-hall
+git clone https://github.com/your-username/asr-thesis.git
+cd asr-thesis
 
 # 2. Setup Modal CLI
 pip install modal
@@ -33,21 +33,21 @@ Truy cập URL được in ra sau khi deploy.
                               │ WebSocket
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                      BACKEND (Modal GPU)                         │
+│                      BACKEND (Modal A100 GPU)                    │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                   │
-│  Audio ──► VAD (Energy) ──► Buffer ──► Faster-Whisper ──► Text  │
-│                                              │                    │
-│                              ┌───────────────┘                    │
-│                              ▼                                    │
-│                    Hallucination Filter                           │
-│                    (Pattern + WPS + Confidence)                   │
-│                              │                                    │
-│                              ▼                                    │
-│                    NLLB Translator ──► English Text               │
-│                              │                                    │
-│                              ▼                                    │
-│                    WebSocket Response                             │
+│  Audio ──► Silero VAD ──► Buffer ──► WhisperX ──► Text          │
+│                                           │                       │
+│                           ┌───────────────┘                       │
+│                           ▼                                       │
+│                 Hallucination Filter                              │
+│                 (Pattern matching)                                │
+│                           │                                       │
+│                           ▼                                       │
+│                 NLLB 3.3B Translator ──► English Text            │
+│                           │                                       │
+│                           ▼                                       │
+│                 WebSocket Response                                │
 │                                                                   │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -56,9 +56,9 @@ Truy cập URL được in ra sau khi deploy.
 
 | Component | Technology | Purpose |
 |-----------|------------|---------|
-| ASR | Faster-Whisper (large-v3) | Vietnamese speech recognition |
+| ASR | WhisperX (large-v3) | Vietnamese speech recognition + word alignment |
 | Translation | NLLB 3.3B | Vi→En neural machine translation |
-| VAD | Energy-based RMS | Voice activity detection |
+| VAD | Silero VAD | Neural voice activity detection |
 | Streaming | WebSocket | Real-time bidirectional |
 | Backend | Modal + FastAPI | Serverless GPU compute |
 | Frontend | Vanilla JS + CSS | Lightweight UI |
@@ -67,58 +67,76 @@ Truy cập URL được in ra sau khi deploy.
 
 ```
 ├── main.py                 # Modal entry point
-├── backend/
-│   ├── asr.py             # Faster-Whisper ASR
-│   ├── translation.py     # NLLB translator
-│   ├── handler.py         # WebSocket session handler
-│   ├── config.py          # Configuration
-│   └── vad.py             # Voice Activity Detection
+├── src/
+│   ├── config/
+│   │   └── settings.py     # Runtime configuration
+│   ├── asr/
+│   │   └── whisperx_asr.py # WhisperX ASR wrapper
+│   ├── vad/
+│   │   └── silero_vad.py   # Silero VAD
+│   ├── translation/
+│   │   └── nllb_translator.py # NLLB translator
+│   ├── session/
+│   │   ├── handler.py      # WebSocket session handler
+│   │   └── filters.py      # Hallucination filters
+│   ├── api/
+│   │   ├── routes.py       # HTTP endpoints
+│   │   └── websocket.py    # WebSocket handler
+│   └── utils/
+│       ├── audio.py        # Audio processing
+│       └── torch_patch.py  # PyTorch compatibility
 └── frontend/
-    ├── index.html         # Main UI
-    ├── style.css          # Styling
+    ├── index.html          # Main UI
+    ├── style.css           # Styling
     └── js/
-        ├── main.js        # App controller
-        ├── audio.js       # Audio capture
-        ├── socket.js      # WebSocket client
-        └── ui.js          # UI manager
+        ├── main.js         # App controller
+        ├── audio.js        # Audio capture
+        ├── socket.js       # WebSocket client
+        └── ui.js           # UI manager
 ```
 
 ## ⚙️ Cấu hình
 
-Chỉnh sửa `backend/config.py`:
+Chỉnh sửa `src/config/settings.py`:
 
 ```python
 WHISPER_MODEL = "large-v3"      # Model size
 WHISPER_LANGUAGE = "vi"         # Force Vietnamese
-MODAL_GPU = "A100"              # GPU type
-VAD_THRESHOLD = 0.01            # Voice detection sensitivity
-MAX_BUFFER_DURATION = 8.0       # Max audio buffer (seconds)
+VAD_THRESHOLD = 0.5             # Voice detection sensitivity
+MAX_BUFFER_DURATION = 6.0       # Max audio buffer (seconds)
+MIN_SILENCE_DURATION = 0.6      # Silence to trigger finalize
 ```
 
-## 🔬 Phương pháp chính (cho Paper)
+Modal config trong `main.py`:
+
+```python
+MODAL_GPU = "A100"              # GPU type
+MODAL_MEMORY = 24576            # Memory (MB)
+```
+
+## 🔬 Phương pháp chính
 
 1. **Streaming ASR Pipeline**
-   - Chunk-based processing với VAD
-   - Faster-Whisper cho low-latency
+   - Chunk-based processing với Silero VAD
+   - WhisperX cho batched inference + word alignment
 
 2. **Hallucination Detection**
-   - Pattern matching (YouTube artifacts)
-   - Words-per-second validation
-   - Confidence thresholding
+   - Pattern matching (YouTube artifacts, sign-offs)
+   - Minimum length validation
 
 3. **Cascade Translation**
-   - NLLB 3.3B với safetensors
+   - NLLB 3.3B với float16
    - Async translation pipeline
 
 4. **Real-time WebSocket Protocol**
-   - Binary audio streaming
-   - JSON transcript responses
+   - Base64 audio streaming
+   - JSON transcript responses with word timestamps
 
 ## 📊 Metrics
 
-- **Latency**: ~0.5-1s (partial), ~2-3s (final + translation)
+- **Latency**: ~0.5-1s (transcription + translation)
 - **GPU**: A100 40GB
-- **Model load**: ~25s cold start
+- **Model load**: ~30s cold start
 
 ## 📈 Evaluation Results
 
@@ -141,4 +159,3 @@ See `test/README.md` for running evaluations.
 ## 📝 License
 
 MIT License
-

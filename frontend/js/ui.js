@@ -24,7 +24,12 @@ class UIManager {
             saveContextBtn: document.getElementById('saveContextBtn'),
             notification: document.getElementById('notification'),
             clearModal: document.getElementById('clearModal'),
-            deleteRecordingModal: document.getElementById('deleteRecordingModal')
+            deleteRecordingModal: document.getElementById('deleteRecordingModal'),
+            langBtn: document.getElementById('langBtn'),
+            langText: document.getElementById('langText'),
+            langDropdown: document.getElementById('langDropdown'),
+            settingsBtn: document.getElementById('settingsBtn'),
+            settingsDropdown: document.getElementById('settingsDropdown')
         };
 
         this.timerInterval = null;
@@ -34,6 +39,15 @@ class UIManager {
         this.pendingDeleteId = null;
         this.onContextSave = null;
         this.displayedSegments = new Map();
+
+        // Language settings
+        this.srcLang = 'vi';
+        this.tgtLang = 'en';
+        this.doTranslate = true;
+
+        // Layout settings: 'dual', 'source', 'target'
+        this.layout = 'dual';
+        this.autoScroll = true;
 
         this.setupEventHandlers();
     }
@@ -93,7 +107,102 @@ class UIManager {
             this.el.sidebarToggle.onclick = () => this.toggleSidebar();
         }
 
+        // Language selection
+        if (this.el.langBtn) {
+            this.el.langBtn.onclick = (e) => {
+                e.stopPropagation();
+                this.el.langDropdown?.classList.toggle('active');
+            };
+        }
+
+        if (this.el.langDropdown) {
+            this.el.langDropdown.querySelectorAll('.dropdown-item').forEach(item => {
+                item.onclick = () => {
+                    const src = item.dataset.src;
+                    const tgt = item.dataset.tgt;
+                    this.setLanguage(src, tgt);
+                    this.el.langDropdown.classList.remove('active');
+                };
+            });
+        }
+
+        // Settings menu
+        if (this.el.settingsBtn) {
+            this.el.settingsBtn.onclick = (e) => {
+                e.stopPropagation();
+                this.el.settingsDropdown?.classList.toggle('active');
+            };
+        }
+
+        if (this.el.settingsDropdown) {
+            this.el.settingsDropdown.querySelectorAll('.layout-option').forEach(item => {
+                item.onclick = () => {
+                    this.setLayout(item.dataset.layout);
+                    this.el.settingsDropdown.classList.remove('active');
+                };
+            });
+
+            const autoScrollToggle = document.getElementById('autoScrollToggle');
+            if (autoScrollToggle) {
+                autoScrollToggle.onclick = () => {
+                    this.autoScroll = !this.autoScroll;
+                    autoScrollToggle.innerHTML = `<span>↓</span> Auto-scroll: ${this.autoScroll ? 'On' : 'Off'}`;
+                };
+            }
+        }
+
+        // Close dropdowns on outside click
+        document.addEventListener('click', () => {
+            this.el.langDropdown?.classList.remove('active');
+            this.el.settingsDropdown?.classList.remove('active');
+        });
+
         this.loadRecordingsSidebar();
+    }
+
+    setLanguage(src, tgt) {
+        this.srcLang = src === 'auto' ? null : src;
+        this.tgtLang = tgt || null;
+        this.doTranslate = !!tgt;
+
+        let label = '';
+        if (src === 'auto') label = 'Auto';
+        else if (src === 'vi') label = 'Vi';
+        else if (src === 'en') label = 'En';
+
+        if (tgt) {
+            label += ` → ${tgt === 'en' ? 'En' : 'Vi'}`;
+        } else {
+            label += ' only';
+        }
+
+        if (this.el.langText) this.el.langText.textContent = label;
+        this.showNotification(`Language: ${label}`);
+    }
+
+    getLanguageSettings() {
+        return {
+            srcLang: this.srcLang,
+            tgtLang: this.tgtLang,
+            translate: this.doTranslate
+        };
+    }
+
+    setLayout(layout) {
+        this.layout = layout;
+
+        // Update panel content class
+        if (this.el.panelContent) {
+            this.el.panelContent.classList.remove('layout-dual', 'layout-source', 'layout-target');
+            this.el.panelContent.classList.add(`layout-${layout}`);
+        }
+
+        // Update selected state in menu
+        this.el.settingsDropdown?.querySelectorAll('.layout-option').forEach(item => {
+            item.classList.toggle('selected', item.dataset.layout === layout);
+        });
+
+        this.showNotification(`Layout: ${layout}`);
     }
 
     setAudioSource(source) {
@@ -165,12 +274,13 @@ class UIManager {
     }
 
     addTranscriptSegment(data) {
-        const { segment_id, source, target, is_final } = data;
+        const { segment_id, source, target, is_final, committed, pending, words, speaker } = data;
         const id = segment_id || 0;
 
-        if (!this.el.panelContent) return;
+        const panel = this.el.panelContent;
+        if (!panel) return;
 
-        const emptyState = this.el.panelContent.querySelector('.empty-state');
+        const emptyState = panel.querySelector('.empty-state');
         if (emptyState) emptyState.remove();
 
         let seg = document.getElementById(`seg-${id}`);
@@ -179,26 +289,76 @@ class UIManager {
             seg = document.createElement('div');
             seg.id = `seg-${id}`;
             seg.className = 'transcript-segment';
-            seg.innerHTML = `<div class="vi-text"></div><div class="en-text"></div>`;
-            this.el.panelContent.appendChild(seg);
+            seg.innerHTML = `
+                <div class="segment-header">
+                    <span class="speaker-badge">Speaker</span>
+                    <span class="seg-timestamp"></span>
+                </div>
+                <div class="segment-source"></div>
+                <div class="segment-target"></div>
+            `;
+            panel.appendChild(seg);
             this.displayedSegments.set(id, seg);
         }
 
-        const viEl = seg.querySelector('.vi-text');
-        const enEl = seg.querySelector('.en-text');
+        const speakerEl = seg.querySelector('.speaker-badge');
+        const sourceEl = seg.querySelector('.segment-source');
+        const targetEl = seg.querySelector('.segment-target');
+        const timestampEl = seg.querySelector('.seg-timestamp');
 
-        if (source && viEl) viEl.textContent = source;
-        if (target && enEl) enEl.textContent = target;
+        // Display speaker badge
+        if (speakerEl && speaker) {
+            speakerEl.textContent = speaker;
+            speakerEl.className = `speaker-badge ${this.getSpeakerColor(speaker)}`;
+        }
 
+        // Show timestamp
+        if (timestampEl && this.startTime) {
+            const elapsed = Math.floor((Date.now() - this.startTime) / 1000);
+            const mins = Math.floor(elapsed / 60);
+            const secs = elapsed % 60;
+            timestampEl.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        }
+
+        // Display source text with committed/pending styling
+        if (sourceEl) {
+            if (committed && pending) {
+                sourceEl.innerHTML = `<span class="committed">${committed}</span> <span class="pending">${pending}</span>`;
+            } else if (source) {
+                sourceEl.textContent = source;
+            }
+        }
+
+        // Display target translation
+        if (target && targetEl) targetEl.textContent = target;
+
+        // Store words for potential word-level highlighting
+        if (words && words.length > 0) {
+            seg.dataset.words = JSON.stringify(words);
+        }
+
+        // Mark as final or partial
         if (is_final) {
             seg.classList.remove('partial');
             seg.classList.add('final');
+            if (sourceEl && source) sourceEl.textContent = source;
         } else {
             seg.classList.add('partial');
             seg.classList.remove('final');
         }
 
-        this.el.panelContent.scrollTop = this.el.panelContent.scrollHeight;
+        // Auto-scroll
+        if (this.autoScroll && panel) {
+            panel.scrollTop = panel.scrollHeight;
+        }
+    }
+
+    getSpeakerColor(speaker) {
+        // Assign consistent color class to each speaker
+        if (!speaker) return '';
+        const num = parseInt(speaker.replace(/\D/g, '')) || 1;
+        const colors = ['speaker-1', 'speaker-2', 'speaker-3', 'speaker-4'];
+        return colors[(num - 1) % colors.length];
     }
 
     clearTranscripts() {

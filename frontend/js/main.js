@@ -81,7 +81,18 @@ class ASRApp {
                 if (data.status === 'started') {
                     this.uiMgr.showNotification('Recording...');
                 } else if (data.status === 'stopped') {
-                    this.uiMgr.showNotification('Stopped');
+                    // Display metrics if available
+                    if (data.metrics) {
+                        const m = data.metrics;
+                        const confPct = Math.round(m.avg_confidence * 100);
+                        const durationSec = Math.round(m.duration_ms / 1000);
+                        this.uiMgr.showNotification(
+                            `Stopped • ${m.segments} segments • ${confPct}% conf • ${m.speech_pct}% speech`
+                        );
+                        console.log('[Metrics]', m);
+                    } else {
+                        this.uiMgr.showNotification('Stopped');
+                    }
                 }
             }
         };
@@ -206,11 +217,9 @@ class ASRApp {
             this.transcripts = {};
             this.sessionId = Date.now();
 
-            this.socketMgr.send('start', {
-                srcLang: null,
-                tgtLang: 'en',
-                translate: true
-            });
+            // Use language settings from UI
+            const langSettings = this.uiMgr.getLanguageSettings();
+            this.socketMgr.send('start', langSettings);
 
             this.isRecording = true;
             this.isConnecting = false;
@@ -239,7 +248,8 @@ class ASRApp {
         this.uiMgr.resetAudioMeter();
         this.uiMgr.updateRecordButton(false);
 
-        await new Promise(r => setTimeout(r, 1500));
+        // Save recording after short delay
+        await new Promise(r => setTimeout(r, 500));
         this.saveRecording();
     }
 

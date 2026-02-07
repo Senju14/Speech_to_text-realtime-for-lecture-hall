@@ -1,27 +1,31 @@
-# Core ML
-torch
-torchaudio
-faster-whisper
-ctranslate2
-transformers
-accelerate
-sentencepiece
-safetensors
-protobuf
+# Core ML (pin torch for pyannote compatibility)
+torch==2.5.1
+torchaudio==2.5.1
 
-# Audio & Math
-numpy
-scipy
-soundfile
+# ASR - WhisperX (includes faster-whisper, pyannote)
+whisperx
 
-# Deployment & Web
+# Translation
+transformers>=4.35.0
+accelerate>=0.25.0
+sentencepiece>=0.1.99
+safetensors>=0.4.0
+protobuf>=3.20.0
+
+# Audio Processing
+numpy>=1.24.0
+scipy>=1.11.0
+soundfile>=0.12.0
+
+# Deployment (Modal Cloud)
 modal
-fastapi
-uvicorn
-websockets
-aiofiles
-python-multipart
-python-dotenv
+
+# Web Framework
+fastapi>=0.104.0
+uvicorn>=0.24.0
+websockets>=12.0
+aiofiles>=23.0.0
 
 # Dev & Testing
 pytest
+ruff

@@ -129,8 +129,7 @@ def run_evaluation(dataset_name: str, max_samples: int, model: str):
         login(token=hf_token)
     
     from jiwer import wer, cer
-    from backend.vad import EnergyVAD
-    from backend.config import VAD_THRESHOLD
+    from backend.vad import SileroVAD
     
     # Validate inputs
     if dataset_name not in DATASETS:
@@ -158,7 +157,8 @@ def run_evaluation(dataset_name: str, max_samples: int, model: str):
         device="cuda",
         compute_type="float16",  # Use FP16 for faster inference on GPU
     )
-    vad = EnergyVAD(threshold=VAD_THRESHOLD)
+    vad = SileroVAD(threshold=0.5)
+    vad.load_model()
     print("  Done")
     
     # Step 2: Load dataset samples

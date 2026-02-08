@@ -87,14 +87,14 @@ class NLLBTranslator:
                 self.model = AutoModelForSeq2SeqLM.from_pretrained(
                     self.model_name,
                     cache_dir=self.cache_dir,
-                    torch_dtype=torch.float16,
+                    dtype=torch.float16,
                     device_map="auto",
                 )
         else:
             self.model = AutoModelForSeq2SeqLM.from_pretrained(
                 self.model_name,
                 cache_dir=self.cache_dir,
-                torch_dtype=torch.float16,
+                dtype=torch.float16,
                 device_map="auto",
             )
         

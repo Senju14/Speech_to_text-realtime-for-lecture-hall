@@ -14,6 +14,7 @@ pip install modal
 modal token new
 
 # 3. Deploy
+modal secret create groq-api-key GROQ_API_KEY=gsk_your_key_here
 modal deploy main.py
 ```
 

@@ -104,10 +104,11 @@ class AudioManager {
     async getMicrophoneStream() {
         const constraints = {
             audio: {
-                echoCancellation: true,
-                noiseSuppression: true,
-                autoGainControl: true,
-                channelCount: 1,
+                // Strict constraints for lecture hall environment
+                echoCancellation: { exact: true },
+                noiseSuppression: { exact: true },
+                autoGainControl: { exact: true },
+                channelCount: { exact: 1 },
                 sampleRate: { ideal: 16000 }
             }
         };

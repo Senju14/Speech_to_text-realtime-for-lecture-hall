@@ -7,6 +7,8 @@ Each client connection gets its own ASRSession instance.
 Optimizations:
 - Binary audio input: Receives raw Int16 bytes (33% smaller than Base64)
 - Async streaming: Sends ASR result immediately, translation follows async
+- Context priming: Groq expands topic keywords -> WhisperX initial_prompt
+- Auto summary: Groq summarizes lecture on session end
 """
 
 import json
@@ -20,11 +22,12 @@ from src.config import (
     WHISPER_MODEL, WHISPER_LANGUAGE, ASR_DEVICE,
     NLLB_MODEL, NLLB_SRC_LANG, NLLB_TGT_LANG, NLLB_DEVICE, NLLB_CACHE_DIR,
     MIN_SILENCE_DURATION, MAX_BUFFER_DURATION, MIN_SEGMENT_DURATION,
-    SAMPLE_RATE,
+    SAMPLE_RATE, AUTO_SUMMARY_MIN_DURATION,
 )
 from src.asr import WhisperXASR
 from src.vad import SileroVAD
 from src.translation import NLLBTranslator
+from src.llm import GroqService
 from src.utils import decode_audio_chunk, decode_audio_bytes
 from src.session.filters import HallucinationFilter
 
@@ -41,6 +44,7 @@ class ASRService:
     def __init__(self):
         self.asr: Optional[WhisperXASR] = None
         self.translator: Optional[NLLBTranslator] = None
+        self.groq: Optional[GroqService] = None
         self.is_initialized = False
     
     async def init(self):
@@ -66,6 +70,11 @@ class ASRService:
             cache_dir=NLLB_CACHE_DIR,
         )
         await loop.run_in_executor(None, self.translator.load_model)
+        
+        # Init Groq LLM (non-blocking, no model to load)
+        print("[Model] Initializing Groq LLM...")
+        self.groq = GroqService()
+        self.groq.init()
         
         self.is_initialized = True
         print("[Model] All models ready")
@@ -102,6 +111,11 @@ class ASRSession:
         self.tgt_lang = "en"
         self.do_translate = True
         
+        # Context priming (Groq)
+        self.topic = ""
+        self.initial_prompt = ""  # Keywords for WhisperX
+        self.all_transcripts = []  # Collect transcripts for summary
+        
         # Components
         self.vad = SileroVAD()
         self.filter = HallucinationFilter()
@@ -127,21 +141,39 @@ class ASRSession:
         self.src_lang = data.get("src_lang", "vi")
         self.tgt_lang = data.get("tgt_lang", "en")
         self.do_translate = data.get("translate", True)
+        self.topic = data.get("topic", "").strip()
         
         self.is_recording = True
         self.segment_id = 0
         self.audio_buffer = np.array([], dtype=np.float32)
         self.session_start_time = time.time()
         self.last_speech_time = time.time()
+        self.all_transcripts = []
+        self.initial_prompt = ""
         
         self.vad.load_model()
         self.vad.reset_state()
         
-        print(f"[Session] Started ({self.src_lang} → {self.tgt_lang})")
+        # === Context Priming: Expand topic into keywords via Groq ===
+        if self.topic and self.service.groq and self.service.groq.is_available:
+            try:
+                keywords = await self.service.groq.expand_keywords(
+                    self.topic, language=self.src_lang
+                )
+                if keywords:
+                    self.initial_prompt = keywords
+                    print(f"[Context] Primed with: {keywords[:80]}...")
+            except Exception as e:
+                logger.error(f"[Context] Keyword expansion failed: {e}")
+        
+        print(f"[Session] Started ({self.src_lang} → {self.tgt_lang})"
+              f"{' | Topic: ' + self.topic[:40] if self.topic else ''}")
         
         await self.out_queue.put(json.dumps({
             "type": "status",
-            "status": "started"
+            "status": "started",
+            "topic": self.topic,
+            "primed": bool(self.initial_prompt),
         }))
     
     async def _handle_audio(self, data: dict):
@@ -225,12 +257,11 @@ class ASRSession:
         
         loop = asyncio.get_event_loop()
         
-        # Transcribe with WhisperX
+        # Transcribe with WhisperX (with context priming if available)
         start_time = time.time()
         result = await loop.run_in_executor(
             None,
-            self.service.asr.transcribe_segment,
-            audio
+            lambda: self.service.asr.transcribe_segment(audio, initial_prompt=self.initial_prompt)
         )
         asr_time = time.time() - start_time
         
@@ -247,6 +278,9 @@ class ASRSession:
         
         self.segment_id += 1
         current_seg_id = self.segment_id
+        
+        # Collect transcript for auto-summary
+        self.all_transcripts.append(text)
         
         print(f"[ASR] #{current_seg_id}: {text[:60]}...")
         if words:
@@ -345,15 +379,44 @@ class ASRSession:
         if len(self.audio_buffer) > int(MIN_SEGMENT_DURATION * SAMPLE_RATE):
             await self._finalize_segment("stop")
         
-        print(f"[Session] Stopped | Segments: {self.segment_id}")
+        session_duration = time.time() - self.session_start_time
+        
+        print(f"[Session] Stopped | Segments: {self.segment_id} | Duration: {session_duration:.0f}s")
         
         await self.out_queue.put(json.dumps({
             "type": "status",
             "status": "stopped",
             "segments": self.segment_id,
         }))
+        
+        # === Auto Summary via Groq (if session > 2 minutes) ===
+        if (session_duration >= AUTO_SUMMARY_MIN_DURATION 
+            and self.all_transcripts 
+            and self.service.groq 
+            and self.service.groq.is_available):
+            asyncio.create_task(self._generate_summary())
     
     async def cleanup(self):
         """Cleanup session resources"""
         self.is_recording = False
         self.audio_buffer = np.array([], dtype=np.float32)
+        self.all_transcripts = []
+    
+    async def _generate_summary(self):
+        """Generate lecture summary via Groq (async, non-blocking)"""
+        try:
+            full_transcript = "\n".join(self.all_transcripts)
+            summary = await self.service.groq.summarize_lecture(
+                full_transcript, topic=self.topic
+            )
+            
+            if summary:
+                await self.out_queue.put(json.dumps({
+                    "type": "summary",
+                    "summary": summary,
+                    "topic": self.topic,
+                    "segments_count": self.segment_id,
+                }))
+                print(f"[Summary] Generated ({len(summary)} chars)")
+        except Exception as e:
+            logger.error(f"[Summary] Generation failed: {e}")

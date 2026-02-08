@@ -40,9 +40,14 @@ async def handle_websocket(websocket: WebSocket, service: ASRService, conn_id: i
                     elif "text" in message and message["text"]:
                         # JSON command (start/stop/ping)
                         await session.handle_incoming(message["text"])
+                elif message["type"] == "websocket.disconnect":
+                    break
                         
         except WebSocketDisconnect:
             print(f"[WS #{conn_id}] Disconnected")
+        except RuntimeError as e:
+            # Gracefully handle "Cannot call receive() once a disconnect has occurred"
+            print(f"[WS #{conn_id}] Client gone: {e}")
         except Exception as e:
             print(f"[WS #{conn_id}] Error: {e}")
     
@@ -53,6 +58,9 @@ async def handle_websocket(websocket: WebSocket, service: ASRService, conn_id: i
                 msg = await session.out_queue.get()
                 if websocket.client_state == WebSocketState.CONNECTED:
                     await websocket.send_text(msg)
+        except RuntimeError:
+            # Client disconnected during send
+            pass
         except Exception:
             pass
     

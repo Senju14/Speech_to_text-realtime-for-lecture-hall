@@ -681,6 +681,43 @@ body {
     resize: vertical;
 }
 
+.input-with-btn {
+    display: flex;
+    gap: 0.5rem;
+    align-items: stretch;
+}
+
+.input-with-btn input {
+    flex: 1;
+    min-width: 0;
+}
+
+.btn-accent {
+    background: linear-gradient(135deg, #8b5cf6, #6366f1);
+    color: white;
+    border: none;
+    white-space: nowrap;
+    font-weight: 500;
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-accent:hover {
+    background: linear-gradient(135deg, #7c3aed, #4f46e5);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+}
+
+.btn-accent:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
 .btn {
     padding: 0.5rem 1rem;
     border-radius: 6px;
@@ -1229,4 +1266,44 @@ body {
 .speaker-label.speaker-4 {
     background: #8b5cf6;
     /* Purple */
+}
+
+/* Summary modal (Groq) */
+.modal.modal-lg {
+    max-width: 700px;
+}
+
+.summary-content {
+    max-height: 60vh;
+    overflow-y: auto;
+    line-height: 1.7;
+    font-size: 0.95rem;
+}
+
+.summary-content h3,
+.summary-content h4 {
+    margin-top: 1rem;
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+}
+
+.summary-content ul {
+    padding-left: 1.5rem;
+    margin: 0.5rem 0;
+}
+
+.summary-content li {
+    margin-bottom: 0.25rem;
+}
+
+.summary-content strong {
+    color: var(--primary, #3b82f6);
+}
+
+/* Form hint text */
+.form-hint {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--text-muted, #888);
+    margin-top: 0.25rem;
 }

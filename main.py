@@ -8,7 +8,7 @@ Usage:
     modal serve main.py      # Local development with hot-reload
 """
 
-from modal import App, Image, asgi_app, Volume, enter
+from modal import App, Image, asgi_app, Volume, enter, Secret
 
 # =============================================================================
 # Modal Infrastructure Configuration
@@ -60,6 +60,7 @@ image = (
         "soundfile>=0.12.0",
     )
     .pip_install("safetensors>=0.4.0", "protobuf>=3.20.0")
+    .pip_install("groq>=0.4.0")
     # Copy source code
     .add_local_dir("src", remote_path="/root/src", copy=True)
     .add_local_dir("frontend", remote_path="/root/frontend", copy=True)
@@ -126,6 +127,7 @@ cache = Volume.from_name("asr-model-cache", create_if_missing=True)
     scaledown_window=MODAL_CONTAINER_IDLE_TIMEOUT,
     image=image_with_models,
     volumes={"/cache": cache},
+    secrets=[Secret.from_name("groq-api-key")],
 )
 class ASR:
     """Main ASR container class"""
@@ -191,7 +193,7 @@ class ASR:
         conn_count = [0]
 
         # Add API routes
-        create_api_routes(web_app, start_time, gpu=MODAL_GPU)
+        create_api_routes(web_app, start_time, gpu=MODAL_GPU, service=self.service)
 
         # WebSocket endpoint
         @web_app.websocket("/ws/transcribe")

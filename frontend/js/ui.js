@@ -29,7 +29,11 @@ class UIManager {
             langText: document.getElementById('langText'),
             langDropdown: document.getElementById('langDropdown'),
             settingsBtn: document.getElementById('settingsBtn'),
-            settingsDropdown: document.getElementById('settingsDropdown')
+            settingsDropdown: document.getElementById('settingsDropdown'),
+            lectureTopic: document.getElementById('lectureTopic'),
+            summaryModal: document.getElementById('summaryModal'),
+            summaryContent: document.getElementById('summaryContent'),
+            aiGenerateBtn: document.getElementById('aiGenerateBtn'),
         };
 
         this.timerInterval = null;
@@ -94,6 +98,7 @@ class UIManager {
         if (this.el.closeModal) this.el.closeModal.onclick = () => this.hideContextModal();
         if (this.el.clearContextBtn) this.el.clearContextBtn.onclick = () => this.clearContext();
         if (this.el.saveContextBtn) this.el.saveContextBtn.onclick = () => this.saveContext();
+        if (this.el.aiGenerateBtn) this.el.aiGenerateBtn.onclick = () => this.aiGenerateKeywords();
 
         [this.el.contextModal, this.el.clearModal].forEach(modal => {
             if (modal) {
@@ -504,6 +509,7 @@ class UIManager {
     clearContext() {
         if (this.el.keywords) this.el.keywords.value = '';
         if (this.el.context) this.el.context.value = '';
+        if (this.el.lectureTopic) this.el.lectureTopic.value = '';
     }
 
     saveContext() {
@@ -512,6 +518,100 @@ class UIManager {
         if (this.onContextSave) this.onContextSave({ keywords, context });
         this.hideContextModal();
         this.showNotification('Saved');
+    }
+
+    getLectureTopic() {
+        return (this.el.lectureTopic?.value || '').trim();
+    }
+
+    async aiGenerateKeywords() {
+        const topic = this.getLectureTopic();
+        if (!topic) {
+            this.showNotification('Enter a lecture topic first');
+            return;
+        }
+
+        const btn = this.el.aiGenerateBtn;
+        if (!btn) return;
+
+        // Disable button during request
+        const originalText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = '⏳ ...';
+
+        try {
+            const resp = await fetch('/api/expand-keywords', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    topic,
+                    language: this.srcLang || 'vi',
+                }),
+            });
+
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.error || `HTTP ${resp.status}`);
+            }
+
+            const data = await resp.json();
+            if (data.keywords && this.el.keywords) {
+                this.el.keywords.value = data.keywords;
+                this.showNotification('Keywords generated!');
+            }
+        } catch (e) {
+            console.error('[AI Generate]', e);
+            this.showNotification(e.message || 'Generation failed');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = originalText;
+        }
+    }
+
+    showSummary(data) {
+        const { summary, topic } = data;
+        if (!summary || !this.el.summaryModal) return;
+
+        // Render markdown-like content (basic: bold, bullets, headings)
+        let html = summary
+            .replace(/^### (.+)$/gm, '<h4>$1</h4>')
+            .replace(/^## (.+)$/gm, '<h3>$1</h3>')
+            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+            .replace(/^- (.+)$/gm, '<li>$1</li>')
+            .replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>')
+            .replace(/\n\n/g, '<br><br>')
+            .replace(/\n/g, '<br>');
+
+        if (this.el.summaryContent) {
+            this.el.summaryContent.innerHTML = html;
+        }
+
+        this.el.summaryModal.classList.add('active');
+
+        // Bind close/copy
+        const closeBtn = document.getElementById('closeSummaryBtn');
+        const closeX = document.getElementById('closeSummaryModal');
+        const copyBtn = document.getElementById('copySummaryBtn');
+
+        const close = () => this.el.summaryModal.classList.remove('active');
+        if (closeBtn) closeBtn.onclick = close;
+        if (closeX) closeX.onclick = close;
+        if (copyBtn) {
+            copyBtn.onclick = async () => {
+                try {
+                    await navigator.clipboard.writeText(summary);
+                    this.showNotification('Summary copied!');
+                } catch (e) {
+                    this.showNotification('Copy failed');
+                }
+            };
+        }
+
+        this.el.summaryModal.onclick = (e) => {
+            if (e.target === this.el.summaryModal) close();
+        };
+
+        this.showNotification('Summary ready!');
     }
 }
 

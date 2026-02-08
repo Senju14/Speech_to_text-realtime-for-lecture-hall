@@ -4,7 +4,11 @@ Configuration settings for ASR Thesis
 NOTE: Modal infrastructure config (MODAL_APP_NAME, MODAL_GPU, etc.) is in main.py
 because Modal needs those values at deploy time before the container starts.
 This file contains runtime configuration only.
+
+API keys are loaded from environment variables (set via .env file or Modal Secrets).
 """
+
+import os
 
 # =============================================================================
 # WhisperX ASR
@@ -20,7 +24,7 @@ ASR_DEVICE = "cuda"
 # =============================================================================
 VAD_THRESHOLD = 0.5
 MIN_SILENCE_DURATION = 0.6   # Seconds of silence to finalize segment
-MAX_BUFFER_DURATION = 6.0    # Max buffer duration before force finalize
+MAX_BUFFER_DURATION = 10.0   # Max buffer duration before force finalize
 MIN_SEGMENT_DURATION = 0.5   # Minimum segment duration to process
 
 # =============================================================================
@@ -54,3 +58,11 @@ SAMPLE_RATE = 16000
 CACHE_DIR = "/cache"
 HF_CACHE_DIR = "/cache/huggingface"
 NLLB_CACHE_DIR = "/cache/nllb"
+
+# =============================================================================
+# Groq LLM (for context priming & auto-summary)
+# =============================================================================
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")  # From .env or Modal Secret
+GROQ_MODEL = "llama-3.1-8b-instant"  # Fast & cheap
+GROQ_TIMEOUT = 10  
+AUTO_SUMMARY_MIN_DURATION = 120  # 2 minutes

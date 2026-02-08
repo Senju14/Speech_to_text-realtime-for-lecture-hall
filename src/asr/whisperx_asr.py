@@ -11,6 +11,7 @@ Reference: https://github.com/m-bain/whisperX
 
 import numpy as np
 import logging
+from dataclasses import replace as dataclass_replace
 from src.config import WHISPER_MODEL, WHISPER_LANGUAGE, WHISPER_COMPUTE_TYPE, ASR_DEVICE
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ class WhisperXASR:
             self.model_size,
             self.device,
             compute_type=self.compute_type,
+            language=self.language,
         )
         
         logger.info(f"Loading alignment model for '{self.language}'")
@@ -61,13 +63,15 @@ class WhisperXASR:
         
         logger.info("WhisperX ready")
     
-    def transcribe(self, audio: np.ndarray, batch_size: int = 16) -> dict:
+    def transcribe(self, audio: np.ndarray, batch_size: int = 16, initial_prompt: str = None) -> dict:
         """
         Transcribe audio with word-level alignment
         
         Args:
             audio: float32 audio at 16kHz
             batch_size: Batch size for inference
+            initial_prompt: Context keywords to prime the model
+                           (improves accuracy for domain-specific terms)
             
         Returns:
             dict with 'segments' containing text and word timestamps
@@ -77,12 +81,26 @@ class WhisperXASR:
         
         import whisperx
         
-        # Transcribe
-        result = self.model.transcribe(
-            audio,
-            batch_size=batch_size,
-            language=self.language,
-        )
+        # Set initial_prompt via model options (WhisperX uses TranscriptionOptions,
+        # NOT a transcribe() keyword argument)
+        original_options = None
+        if initial_prompt and hasattr(self.model, 'options'):
+            original_options = self.model.options
+            self.model.options = dataclass_replace(
+                self.model.options, initial_prompt=initial_prompt
+            )
+        
+        try:
+            # Transcribe
+            result = self.model.transcribe(
+                audio,
+                batch_size=batch_size,
+                language=self.language,
+            )
+        finally:
+            # Restore original options (model is shared across sessions)
+            if original_options is not None:
+                self.model.options = original_options
         
         # Align for word-level timestamps
         result = whisperx.align(
@@ -96,12 +114,13 @@ class WhisperXASR:
         
         return result
     
-    def transcribe_segment(self, audio: np.ndarray) -> dict:
+    def transcribe_segment(self, audio: np.ndarray, initial_prompt: str = None) -> dict:
         """
         Transcribe a single audio segment
         
         Args:
-            audio: float32 audio at 16kHz (typically 0.5-6 seconds)
+            audio: float32 audio at 16kHz (typically 0.5-10 seconds)
+            initial_prompt: Context keywords for domain accuracy
             
         Returns:
             dict with 'text' and 'words' list
@@ -109,7 +128,7 @@ class WhisperXASR:
         if len(audio) < 8000:  # < 0.5 seconds
             return {"text": "", "words": [], "segments": []}
         
-        result = self.transcribe(audio, batch_size=1)
+        result = self.transcribe(audio, batch_size=1, initial_prompt=initial_prompt)
         
         text_parts = []
         all_words = []

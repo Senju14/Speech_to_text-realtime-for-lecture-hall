@@ -78,6 +78,9 @@ class ASRApp {
                     if (data.source) this.transcripts[id].vi = data.source;
                     if (data.target) this.transcripts[id].en = data.target;
                 }
+            } else if (data.type === 'summary') {
+                // Groq auto-summary
+                this.uiMgr.showSummary(data);
             } else if (data.type === 'status') {
                 if (data.status === 'started') {
                     this.uiMgr.showNotification('Recording...');
@@ -218,9 +221,10 @@ class ASRApp {
             this.transcripts = {};
             this.sessionId = Date.now();
 
-            // Use language settings from UI
+            // Use language settings from UI + lecture topic
             const langSettings = this.uiMgr.getLanguageSettings();
-            this.socketMgr.send('start', langSettings);
+            const topic = this.uiMgr.getLectureTopic();
+            this.socketMgr.send('start', { ...langSettings, topic });
 
             this.isRecording = true;
             this.isConnecting = false;

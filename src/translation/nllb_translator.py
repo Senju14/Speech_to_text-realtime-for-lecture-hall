@@ -56,6 +56,7 @@ class NLLBTranslator:
             return
         
         from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+        from src.utils import suppress_stdout
         
         logger.info(f"Loading NLLB: {self.model_name} (8-bit: {NLLB_USE_8BIT})")
         
@@ -65,38 +66,41 @@ class NLLBTranslator:
             src_lang=self.src_lang
         )
         
-        # Model loading with optional 8-bit quantization
-        if NLLB_USE_8BIT:
-            try:
-                from transformers import BitsAndBytesConfig
-                
-                quantization_config = BitsAndBytesConfig(
-                    load_in_8bit=True,
-                    llm_int8_threshold=6.0,
-                )
-                
+        # Suppress noisy print() and logging from accelerate/transformers during loading
+        with suppress_stdout():
+            # Model loading with optional 8-bit quantization
+            if NLLB_USE_8BIT:
+                try:
+                    from transformers import BitsAndBytesConfig
+                    
+                    quantization_config = BitsAndBytesConfig(
+                        load_in_8bit=True,
+                        llm_int8_threshold=6.0,
+                    )
+                    
+                    # 8-bit needs device_map="auto" for dispatch
+                    self.model = AutoModelForSeq2SeqLM.from_pretrained(
+                        self.model_name,
+                        cache_dir=self.cache_dir,
+                        quantization_config=quantization_config,
+                        device_map="auto",
+                    )
+                    logger.info("NLLB loaded with 8-bit quantization")
+                except ImportError:
+                    logger.warning("bitsandbytes not installed, falling back to float16")
+                    self.model = AutoModelForSeq2SeqLM.from_pretrained(
+                        self.model_name,
+                        cache_dir=self.cache_dir,
+                        torch_dtype=torch.float16,
+                    ).to(self.device)
+            else:
+                # distilled-600M fits easily on single GPU - no need for device_map="auto"
+                # This eliminates the "following layers were not sharded" warning
                 self.model = AutoModelForSeq2SeqLM.from_pretrained(
                     self.model_name,
                     cache_dir=self.cache_dir,
-                    quantization_config=quantization_config,
-                    device_map="auto",
-                )
-                logger.info("NLLB loaded with 8-bit quantization")
-            except ImportError:
-                logger.warning("bitsandbytes not installed, falling back to float16")
-                self.model = AutoModelForSeq2SeqLM.from_pretrained(
-                    self.model_name,
-                    cache_dir=self.cache_dir,
-                    dtype=torch.float16,
-                    device_map="auto",
-                )
-        else:
-            self.model = AutoModelForSeq2SeqLM.from_pretrained(
-                self.model_name,
-                cache_dir=self.cache_dir,
-                dtype=torch.float16,
-                device_map="auto",
-            )
+                    torch_dtype=torch.float16,
+                ).to(self.device)
         
         self.model.eval()
         self.is_loaded = True

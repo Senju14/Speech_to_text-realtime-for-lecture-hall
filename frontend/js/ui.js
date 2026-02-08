@@ -23,6 +23,7 @@ class UIManager {
             clearContextBtn: document.getElementById('clearContextBtn'),
             saveContextBtn: document.getElementById('saveContextBtn'),
             notification: document.getElementById('notification'),
+            toastContainer: document.getElementById('toastContainer'),
             clearModal: document.getElementById('clearModal'),
             deleteRecordingModal: document.getElementById('deleteRecordingModal'),
             langBtn: document.getElementById('langBtn'),
@@ -258,14 +259,29 @@ class UIManager {
         if (this.el.timer) this.el.timer.textContent = '00:00';
     }
 
-    updateRecordButton(isRecording) {
+    updateRecordButton(state) {
         if (!this.el.recordBtn) return;
-        if (isRecording) {
-            this.el.recordBtn.classList.add('recording');
-            this.el.recordBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
-        } else {
-            this.el.recordBtn.classList.remove('recording');
-            this.el.recordBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>';
+
+        // Remove all states
+        this.el.recordBtn.classList.remove('recording', 'connecting');
+        this.el.recordBtn.disabled = false;
+
+        switch (state) {
+            case 'connecting':
+                this.el.recordBtn.classList.add('connecting');
+                this.el.recordBtn.disabled = true;
+                this.el.recordBtn.innerHTML = ''; // CSS ::after draws spinner
+                break;
+            case true:
+            case 'recording':
+                this.el.recordBtn.classList.add('recording');
+                this.el.recordBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+                break;
+            case false:
+            case 'idle':
+            default:
+                this.el.recordBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>';
+                break;
         }
     }
 
@@ -395,11 +411,40 @@ class UIManager {
         }
     }
 
-    showNotification(msg) {
-        if (!this.el.notification) return;
-        this.el.notification.textContent = msg;
-        this.el.notification.classList.add('active');
-        setTimeout(() => this.el.notification.classList.remove('active'), 2500);
+    // ===== Toast Notification System =====
+    showNotification(msg, type = 'info') {
+        this._showToast(msg, type);
+    }
+
+    _showToast(message, type = 'info') {
+        const container = this.el.toastContainer;
+        if (!container) {
+            // Fallback to legacy notification
+            if (this.el.notification) {
+                this.el.notification.textContent = message;
+                this.el.notification.classList.add('active');
+                setTimeout(() => this.el.notification.classList.remove('active'), 2500);
+            }
+            return;
+        }
+
+        const icons = { info: 'ℹ️', success: '✅', error: '❌', warning: '⚠️' };
+        const toast = document.createElement('div');
+        toast.className = `toast toast-${type}`;
+        toast.innerHTML = `<span class="toast-icon">${icons[type] || icons.info}</span><span>${message}</span>`;
+        container.appendChild(toast);
+
+        // Auto-dismiss
+        const duration = type === 'error' ? 5000 : 3000;
+        setTimeout(() => {
+            toast.classList.add('toast-exit');
+            toast.addEventListener('animationend', () => toast.remove());
+        }, duration);
+
+        // Max 4 toasts visible
+        while (container.children.length > 4) {
+            container.firstChild.remove();
+        }
     }
 
     closeClearModal() {

@@ -19,6 +19,11 @@ class ExpandKeywordsRequest(BaseModel):
     language: str = "vi"
 
 
+class SummarizeRequest(BaseModel):
+    transcript: str
+    topic: str = ""
+
+
 def create_api_routes(app: FastAPI, start_time: float, gpu: str = "A100", service=None):
     """Add HTTP routes to FastAPI app"""
     
@@ -59,5 +64,32 @@ def create_api_routes(app: FastAPI, start_time: float, gpu: str = "A100", servic
             logger.error(f"[API] expand-keywords error: {e}")
             return JSONResponse(
                 {"error": "Keyword expansion failed"},
+                status_code=500,
+            )
+    
+    @app.post("/api/summarize")
+    async def summarize(req: SummarizeRequest):
+        """Summarize a transcript via Groq LLM"""
+        if not service or not service.groq or not service.groq.is_available:
+            return JSONResponse(
+                {"error": "LLM service not available"},
+                status_code=503,
+            )
+        
+        if not req.transcript.strip():
+            return JSONResponse(
+                {"error": "Transcript is required"},
+                status_code=400,
+            )
+        
+        try:
+            summary = await service.groq.summarize_lecture(
+                req.transcript.strip(), topic=req.topic.strip() or None
+            )
+            return JSONResponse({"summary": summary})
+        except Exception as e:
+            logger.error(f"[API] summarize error: {e}")
+            return JSONResponse(
+                {"error": "Summarization failed"},
                 status_code=500,
             )

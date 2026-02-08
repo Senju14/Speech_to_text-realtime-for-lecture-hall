@@ -21,7 +21,7 @@ MODAL_APP_NAME = "asr-thesis"
 MODAL_GPU = "A100" 
 MODAL_MEMORY = 24576
 MODAL_TIMEOUT = 600
-MODAL_CONTAINER_IDLE_TIMEOUT = 120
+MODAL_CONTAINER_IDLE_TIMEOUT = 300
 
 # Also defined in src/config/settings.py for runtime use
 WHISPER_MODEL = "large-v3"
@@ -75,23 +75,25 @@ def download_models():
     os.environ["HF_HOME"] = "/cache/huggingface"
     
     # Apply PyTorch patch for pyannote compatibility
-    from src.utils import apply_torch_load_patch
+    from src.utils import apply_torch_load_patch, suppress_stdout
     apply_torch_load_patch()
     
     import whisperx
     
-    # WhisperX + alignment
+    # WhisperX + alignment (suppress noisy print() from pyannote/lightning)
     print("[Pre-download] WhisperX large-v3...")
-    model = whisperx.load_model("large-v3", device="cuda", compute_type="float16")
+    with suppress_stdout():
+        model = whisperx.load_model("large-v3", device="cuda", compute_type="float16")
     del model
     
     print("[Pre-download] Alignment model (vi)...")
-    align_model, _ = whisperx.load_align_model(language_code="vi", device="cuda")
+    with suppress_stdout():
+        align_model, _ = whisperx.load_align_model(language_code="vi", device="cuda")
     del align_model
     
     # NLLB Translation
     from src.translation import NLLBTranslator
-    print("[Pre-download] NLLB-200 3.3B...")
+    print("[Pre-download] NLLB-200 distilled-600M...")
     translator = NLLBTranslator(cache_dir="/cache/nllb")
     translator.load_model()
     del translator
@@ -99,8 +101,9 @@ def download_models():
     # Silero VAD
     from src.vad import SileroVAD
     print("[Pre-download] Silero VAD...")
-    vad = SileroVAD()
-    vad.load_model()
+    with suppress_stdout():
+        vad = SileroVAD()
+        vad.load_model()
     del vad
     
     print("[Pre-download] Complete!")
@@ -147,7 +150,7 @@ class ASR:
         from src.utils import apply_torch_load_patch
         apply_torch_load_patch()
         
-        print("[Container] Initializing...")
+        print("[Container] Loading models from cache...")
         start = time.time()
         
         # Initialize ASR service
@@ -155,7 +158,9 @@ class ASR:
         self.service = ASRService()
         asyncio.run(self.service.init())
         
-        print(f"[Container] Ready in {time.time() - start:.1f}s | WhisperX: {WHISPER_MODEL} | GPU: {MODAL_GPU}")
+        elapsed = time.time() - start
+        print(f"[Container] Ready in {elapsed:.1f}s | WhisperX: {WHISPER_MODEL} | GPU: {MODAL_GPU}")
+        print(f"[Container] Idle timeout: {MODAL_CONTAINER_IDLE_TIMEOUT}s (container stays warm)")
 
     @asgi_app()
     def app(self):

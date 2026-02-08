@@ -23,9 +23,9 @@ ASR_DEVICE = "cuda"
 # Voice Activity Detection
 # =============================================================================
 VAD_THRESHOLD = 0.5
-MIN_SILENCE_DURATION = 0.6   # Seconds of silence to finalize segment
-MAX_BUFFER_DURATION = 10.0   # Max buffer duration before force finalize
-MIN_SEGMENT_DURATION = 0.5   # Minimum segment duration to process
+MIN_SILENCE_DURATION = 0.3   # Seconds of silence to finalize segment (tuned for real-time)
+MAX_BUFFER_DURATION = 4.0    # Max buffer duration before force finalize (tuned for real-time)
+MIN_SEGMENT_DURATION = 0.3   # Minimum segment duration to process
 
 # =============================================================================
 # NLLB Translation
@@ -44,7 +44,7 @@ NLLB_SRC_LANG = "vie_Latn"
 NLLB_TGT_LANG = "eng_Latn"
 NLLB_DEVICE = "cuda"
 NLLB_MAX_LENGTH = 128  # Increased from 64 for longer sentences
-NLLB_NUM_BEAMS = 2     # Increased from 1 for better quality
+NLLB_NUM_BEAMS = 1     # Greedy decoding for speed (beam=2 is ~2x slower)
 
 # =============================================================================
 # Audio Format

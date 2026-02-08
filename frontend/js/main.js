@@ -43,15 +43,15 @@ class ASRApp {
 
     async checkServerStatus() {
         try {
-            this.uiMgr.showNotification('Connecting...');
+            this.uiMgr.showNotification('Connecting to server...', 'info');
             const res = await fetch('/api/status');
             if (res.ok) {
                 const data = await res.json();
                 this.serverReady = true;
-                this.uiMgr.showNotification(`Ready: ${data.model || 'Whisper'}`);
+                this.uiMgr.showNotification(`Ready • ${data.model || 'Whisper'} on ${data.gpu || 'GPU'}`, 'success');
             }
         } catch (e) {
-            this.uiMgr.showNotification('Server loading...');
+            this.uiMgr.showNotification('Server is starting up...', 'warning');
         }
     }
 
@@ -79,23 +79,27 @@ class ASRApp {
                     if (data.target) this.transcripts[id].en = data.target;
                 }
             } else if (data.type === 'summary') {
-                // Groq auto-summary
                 this.uiMgr.showSummary(data);
+            } else if (data.type === 'log') {
+                // Structured log messages from backend
+                const level = data.level || 'info';
+                this.uiMgr.showNotification(data.message, level);
             } else if (data.type === 'status') {
                 if (data.status === 'started') {
-                    this.uiMgr.showNotification('Recording...');
+                    const msg = data.primed
+                        ? `Recording • Context primed with keywords`
+                        : 'Recording...';
+                    this.uiMgr.showNotification(msg, 'success');
                 } else if (data.status === 'stopped') {
-                    // Display metrics if available
                     if (data.metrics) {
                         const m = data.metrics;
                         const confPct = Math.round(m.avg_confidence * 100);
-                        const durationSec = Math.round(m.duration_ms / 1000);
                         this.uiMgr.showNotification(
-                            `Stopped • ${m.segments} segments • ${confPct}% conf • ${m.speech_pct}% speech`
+                            `Stopped • ${m.segments} segments • ${confPct}% confidence`,
+                            'info'
                         );
-                        console.log('[Metrics]', m);
                     } else {
-                        this.uiMgr.showNotification('Stopped');
+                        this.uiMgr.showNotification('Recording stopped', 'info');
                     }
                 }
             }
@@ -108,14 +112,14 @@ class ASRApp {
 
         this.socketMgr.onDisconnected = () => {
             if (this.isRecording) {
-                this.uiMgr.showNotification('Disconnected');
+                this.uiMgr.showNotification('Connection lost', 'error');
                 this.stopRecording();
             }
         };
 
         this.socketMgr.onError = () => {
             this.isConnecting = false;
-            this.uiMgr.showNotification('Connection error');
+            this.uiMgr.showNotification('Connection error', 'error');
         };
     }
 
@@ -133,6 +137,24 @@ class ASRApp {
                 this.uiMgr.showNotification('Context saved');
             }
         };
+
+        // Manual Summarize button
+        const summarizeBtn = document.getElementById('summarizeBtn');
+        if (summarizeBtn) {
+            summarizeBtn.onclick = () => {
+                const segments = Object.values(this.transcripts).filter(t => t.vi || t.en);
+                if (segments.length === 0) {
+                    this.uiMgr.showNotification('No transcripts to summarize', 'warning');
+                    return;
+                }
+                if (this.socketMgr.isConnected()) {
+                    this.socketMgr.send('summarize');
+                    this.uiMgr.showNotification('Generating summary...', 'info');
+                } else {
+                    this.uiMgr.showNotification('Not connected to server', 'error');
+                }
+            };
+        }
 
         // Microphone selection
         const audioDropdown = document.getElementById('audioDropdown');
@@ -187,7 +209,7 @@ class ASRApp {
                         case 'json': exportJSON(segments); break;
                     }
 
-                    this.uiMgr.showNotification(`Exported ${format.toUpperCase()}`);
+                    this.uiMgr.showNotification(`Exported ${format.toUpperCase()}`, 'success');
                     exportDropdown.classList.remove('active');
                 };
             });
@@ -201,13 +223,13 @@ class ASRApp {
     async startRecording() {
         if (this.isConnecting) return;
         if (!this.serverReady) {
-            this.uiMgr.showNotification('Server loading...');
+            this.uiMgr.showNotification('Server is starting up...', 'warning');
             await this.checkServerStatus();
             if (!this.serverReady) return;
         }
 
         this.isConnecting = true;
-        this.uiMgr.showNotification('Connecting...');
+        this.uiMgr.updateRecordButton('connecting');
 
         try {
             if (!this.socketMgr.isConnected()) {
@@ -221,7 +243,6 @@ class ASRApp {
             this.transcripts = {};
             this.sessionId = Date.now();
 
-            // Use language settings from UI + lecture topic
             const langSettings = this.uiMgr.getLanguageSettings();
             const topic = this.uiMgr.getLectureTopic();
             this.socketMgr.send('start', { ...langSettings, topic });
@@ -229,15 +250,40 @@ class ASRApp {
             this.isRecording = true;
             this.isConnecting = false;
             this.uiMgr.startTimer();
-            this.uiMgr.updateRecordButton(true);
+            this.uiMgr.updateRecordButton('recording');
 
         } catch (err) {
             this.isConnecting = false;
             this.isRecording = false;
-            this.uiMgr.updateRecordButton(false);
+            this.uiMgr.updateRecordButton('idle');
             this.uiMgr.resetAudioMeter();
-            this.uiMgr.showNotification(err.message || 'Could not start');
+
+            // Map browser errors to friendly messages
+            const friendly = this._getFriendlyError(err);
+            this.uiMgr.showNotification(friendly, 'error');
         }
+    }
+
+    _getFriendlyError(err) {
+        const name = err.name || '';
+        const msg = err.message || '';
+
+        if (name === 'NotAllowedError' || msg.includes('Permission denied')) {
+            return 'Microphone access denied. Please allow microphone permission and try again.';
+        }
+        if (name === 'NotFoundError' || msg.includes('Requested device not found')) {
+            return 'No microphone found. Please connect a microphone.';
+        }
+        if (name === 'NotReadableError' || msg.includes('Could not start')) {
+            return 'Microphone is in use by another application.';
+        }
+        if (msg.includes('timeout') || msg.includes('Timeout')) {
+            return 'Connection timed out. Please try again.';
+        }
+        if (msg.includes('No audio')) {
+            return 'No audio detected. Make sure "Share audio" is enabled.';
+        }
+        return msg || 'Could not start recording';
     }
 
     async stopRecording() {
@@ -251,7 +297,7 @@ class ASRApp {
         this.isConnecting = false;
         this.uiMgr.stopTimer();
         this.uiMgr.resetAudioMeter();
-        this.uiMgr.updateRecordButton(false);
+        this.uiMgr.updateRecordButton('idle');
 
         // Save recording after short delay
         await new Promise(r => setTimeout(r, 500));

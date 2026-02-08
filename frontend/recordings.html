@@ -25,7 +25,12 @@
           <h2 id="recordingTitle">Select a recording</h2>
           <div class="content-subtitle" id="recordingSubtitle"></div>
         </div>
-        <a href="./index.html" class="btn btn-secondary btn-sm">← Back to Live</a>
+        <div class="content-header-actions">
+          <button class="btn btn-accent btn-sm" id="summarizeBtn" title="AI Summarize" style="display:none;">
+            📝 Summarize
+          </button>
+          <a href="./index.html" class="btn btn-secondary btn-sm">← Back to Live</a>
+        </div>
       </div>
 
       <div class="content-body" id="transcriptContent">
@@ -73,6 +78,25 @@
       </div>
     </div>
   </div>
+
+  <!-- Summary modal -->
+  <div class="modal-overlay" id="summaryModal">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <h3>📝 Lecture Summary</h3>
+        <button class="modal-close" id="closeSummaryModal" title="Close">×</button>
+      </div>
+      <div class="modal-body">
+        <div id="summaryContent" class="summary-content"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="copySummaryBtn">Copy</button>
+        <button class="btn btn-primary" id="closeSummaryBtn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast-container" id="toastContainer"></div>
 
   <script type="module" src="js/recordings.js"></script>
 </body>

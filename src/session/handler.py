@@ -15,6 +15,7 @@ import json
 import asyncio
 import numpy as np
 import time
+import re
 import logging
 from typing import Optional
 
@@ -52,16 +53,19 @@ class ASRService:
         loop = asyncio.get_event_loop()
         
         # Load WhisperX
-        print("[Model] Loading WhisperX...")
+        t0 = time.time()
+        logger.info("[Model] Loading WhisperX...")
         self.asr = WhisperXASR(
             model_size=WHISPER_MODEL,
             language=WHISPER_LANGUAGE,
             device=ASR_DEVICE,
         )
         await loop.run_in_executor(None, self.asr.load_model)
+        logger.info(f"[Model] WhisperX loaded in {time.time() - t0:.1f}s")
         
         # Load NLLB
-        print("[Model] Loading NLLB Translator...")
+        t0 = time.time()
+        logger.info("[Model] Loading NLLB Translator...")
         self.translator = NLLBTranslator(
             model_name=NLLB_MODEL,
             src_lang=NLLB_SRC_LANG,
@@ -70,14 +74,15 @@ class ASRService:
             cache_dir=NLLB_CACHE_DIR,
         )
         await loop.run_in_executor(None, self.translator.load_model)
+        logger.info(f"[Model] NLLB loaded in {time.time() - t0:.1f}s")
         
         # Init Groq LLM (non-blocking, no model to load)
-        print("[Model] Initializing Groq LLM...")
+        logger.info("[Model] Initializing Groq LLM...")
         self.groq = GroqService()
         self.groq.init()
         
         self.is_initialized = True
-        print("[Model] All models ready")
+        logger.info("[Model] All models ready")
     
     def create_session(self) -> "ASRSession":
         """Create a new session for a WebSocket connection"""
@@ -120,6 +125,23 @@ class ASRSession:
         self.vad = SileroVAD()
         self.filter = HallucinationFilter()
     
+    async def _send_log(self, message: str, level: str = "info"):
+        """Send structured log message to client (for toast notifications)"""
+        await self.out_queue.put(json.dumps({
+            "type": "log",
+            "level": level,
+            "message": message,
+        }))
+
+    @staticmethod
+    def _sanitize_topic(topic: str) -> str:
+        """Sanitize user-provided topic input"""
+        if not topic:
+            return ""
+        # Strip control characters, limit length
+        topic = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', topic)
+        return topic.strip()[:200]
+
     async def handle_incoming(self, message: str):
         """Handle incoming WebSocket message"""
         try:
@@ -132,6 +154,8 @@ class ASRSession:
                 await self._handle_audio(data)
             elif msg_type == "stop":
                 await self._handle_stop()
+            elif msg_type == "summarize":
+                await self._handle_summarize()
                 
         except Exception as e:
             logger.error(f"Error handling message: {e}")
@@ -141,7 +165,7 @@ class ASRSession:
         self.src_lang = data.get("src_lang", "vi")
         self.tgt_lang = data.get("tgt_lang", "en")
         self.do_translate = data.get("translate", True)
-        self.topic = data.get("topic", "").strip()
+        self.topic = self._sanitize_topic(data.get("topic", ""))
         
         self.is_recording = True
         self.segment_id = 0
@@ -157,16 +181,18 @@ class ASRSession:
         # === Context Priming: Expand topic into keywords via Groq ===
         if self.topic and self.service.groq and self.service.groq.is_available:
             try:
+                await self._send_log("Generating keywords from topic...", "info")
                 keywords = await self.service.groq.expand_keywords(
                     self.topic, language=self.src_lang
                 )
                 if keywords:
                     self.initial_prompt = keywords
-                    print(f"[Context] Primed with: {keywords[:80]}...")
+                    logger.info(f"[Context] Primed with: {keywords[:80]}...")
             except Exception as e:
                 logger.error(f"[Context] Keyword expansion failed: {e}")
+                await self._send_log("Keyword generation failed, continuing without", "warning")
         
-        print(f"[Session] Started ({self.src_lang} → {self.tgt_lang})"
+        logger.info(f"[Session] Started ({self.src_lang} → {self.tgt_lang})"
               f"{' | Topic: ' + self.topic[:40] if self.topic else ''}")
         
         await self.out_queue.put(json.dumps({
@@ -216,6 +242,20 @@ class ASRSession:
         buffer_duration = len(self.audio_buffer) / SAMPLE_RATE
         silence_duration = current_time - self.last_speech_time
         
+        # Send buffering indicator every ~2s so user sees activity
+        if has_speech and buffer_duration > 1.0 and int(buffer_duration) % 2 == 0:
+            # Send a lightweight "listening" indicator
+            elapsed = buffer_duration
+            if not hasattr(self, '_last_buffer_notify') or current_time - self._last_buffer_notify > 1.5:
+                self._last_buffer_notify = current_time
+                await self.out_queue.put(json.dumps({
+                    "type": "transcript",
+                    "segment_id": self.segment_id + 1,
+                    "source": "...",
+                    "target": "",
+                    "is_final": False,
+                }))
+        
         # Check finalize conditions
         should_finalize = False
         reason = ""
@@ -253,7 +293,7 @@ class ASRSession:
         self.audio_buffer = np.array([], dtype=np.float32)
         self.last_speech_time = time.time()
         
-        print(f"[VAD] Finalize ({reason})")
+        logger.info(f"[VAD] Finalize ({reason})")
         
         loop = asyncio.get_event_loop()
         
@@ -273,7 +313,7 @@ class ASRSession:
         
         # Filter hallucinations
         if self.filter.is_hallucination(text):
-            print(f"[Filter] Skipped: {text[:50]}...")
+            logger.debug(f"[Filter] Skipped: {text[:50]}...")
             return
         
         self.segment_id += 1
@@ -282,9 +322,9 @@ class ASRSession:
         # Collect transcript for auto-summary
         self.all_transcripts.append(text)
         
-        print(f"[ASR] #{current_seg_id}: {text[:60]}...")
+        logger.info(f"[ASR] #{current_seg_id}: {text[:60]}...")
         if words:
-            print(f"[Words] {len(words)} words aligned")
+            logger.debug(f"[Words] {len(words)} words aligned")
         
         # === ASYNC STREAMING: Send ASR result immediately ===
         if self.do_translate and self.service.translator:
@@ -337,7 +377,7 @@ class ASRSession:
             )
             mt_time = time.time() - start_time
             
-            print(f"[MT] #{segment_id} ({mt_time:.1f}s): {translation[:50]}...")
+            logger.info(f"[MT] #{segment_id} ({mt_time:.1f}s): {translation[:50]}...")
             
             # Send final update with translation
             await self.out_queue.put(json.dumps({
@@ -381,7 +421,7 @@ class ASRSession:
         
         session_duration = time.time() - self.session_start_time
         
-        print(f"[Session] Stopped | Segments: {self.segment_id} | Duration: {session_duration:.0f}s")
+        logger.info(f"[Session] Stopped | Segments: {self.segment_id} | Duration: {session_duration:.0f}s")
         
         await self.out_queue.put(json.dumps({
             "type": "status",
@@ -394,7 +434,21 @@ class ASRSession:
             and self.all_transcripts 
             and self.service.groq 
             and self.service.groq.is_available):
+            await self._send_log("Generating lecture summary...", "info")
             asyncio.create_task(self._generate_summary())
+    
+    async def _handle_summarize(self):
+        """Handle manual summarize request from client"""
+        if not self.all_transcripts:
+            await self._send_log("No transcripts to summarize", "warning")
+            return
+        
+        if not self.service.groq or not self.service.groq.is_available:
+            await self._send_log("Summary service not available", "error")
+            return
+        
+        await self._send_log("Generating summary...", "info")
+        await self._generate_summary()
     
     async def cleanup(self):
         """Cleanup session resources"""
@@ -417,6 +471,6 @@ class ASRSession:
                     "topic": self.topic,
                     "segments_count": self.segment_id,
                 }))
-                print(f"[Summary] Generated ({len(summary)} chars)")
+                logger.info(f"[Summary] Generated ({len(summary)} chars)")
         except Exception as e:
             logger.error(f"[Summary] Generation failed: {e}")

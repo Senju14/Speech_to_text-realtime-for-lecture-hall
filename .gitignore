@@ -52,6 +52,7 @@ models/
 *.log
 logs/
 debug_audio/
+recorded_audio/
 *.wav
 *.mp3
 *.m4a

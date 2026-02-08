@@ -41,37 +41,42 @@ class WhisperXASR:
             return
         
         # Apply torch.load patch before importing whisperx
-        from src.utils import apply_torch_load_patch
+        from src.utils import apply_torch_load_patch, suppress_stdout
         apply_torch_load_patch()
         
         import whisperx
         
         logger.info(f"Loading WhisperX: {self.model_size}")
         
-        self.model = whisperx.load_model(
-            self.model_size,
-            self.device,
-            compute_type=self.compute_type,
-            language=self.language,
-        )
+        # Suppress noisy print() from pyannote/pytorch_lightning during loading
+        with suppress_stdout():
+            self.model = whisperx.load_model(
+                self.model_size,
+                self.device,
+                compute_type=self.compute_type,
+                language=self.language,
+            )
         
         logger.info(f"Loading alignment model for '{self.language}'")
-        self.align_model, self.align_metadata = whisperx.load_align_model(
-            language_code=self.language,
-            device=self.device,
-        )
+        with suppress_stdout():
+            self.align_model, self.align_metadata = whisperx.load_align_model(
+                language_code=self.language,
+                device=self.device,
+            )
         
         logger.info("WhisperX ready")
     
-    def transcribe(self, audio: np.ndarray, batch_size: int = 16, initial_prompt: str = None) -> dict:
+    def transcribe(self, audio: np.ndarray, batch_size: int = 16, initial_prompt: str = None, skip_align: bool = False) -> dict:
         """
-        Transcribe audio with word-level alignment
+        Transcribe audio with optional word-level alignment
         
         Args:
             audio: float32 audio at 16kHz
             batch_size: Batch size for inference
             initial_prompt: Context keywords to prime the model
                            (improves accuracy for domain-specific terms)
+            skip_align: If True, skip whisperx.align() for faster streaming.
+                       Word-level timestamps will not be available.
             
         Returns:
             dict with 'segments' containing text and word timestamps
@@ -102,25 +107,28 @@ class WhisperXASR:
             if original_options is not None:
                 self.model.options = original_options
         
-        # Align for word-level timestamps
-        result = whisperx.align(
-            result["segments"],
-            self.align_model,
-            self.align_metadata,
-            audio,
-            self.device,
-            return_char_alignments=False,
-        )
+        # Skip alignment for real-time streaming (saves ~30-50% latency)
+        # Alignment runs wav2vec2 on the audio again just for word timestamps
+        if not skip_align and self.align_model is not None:
+            result = whisperx.align(
+                result["segments"],
+                self.align_model,
+                self.align_metadata,
+                audio,
+                self.device,
+                return_char_alignments=False,
+            )
         
         return result
     
-    def transcribe_segment(self, audio: np.ndarray, initial_prompt: str = None) -> dict:
+    def transcribe_segment(self, audio: np.ndarray, initial_prompt: str = None, skip_align: bool = True) -> dict:
         """
-        Transcribe a single audio segment
+        Transcribe a single audio segment (optimized for streaming)
         
         Args:
             audio: float32 audio at 16kHz (typically 0.5-10 seconds)
             initial_prompt: Context keywords for domain accuracy
+            skip_align: Skip word-level alignment for faster streaming (default: True)
             
         Returns:
             dict with 'text' and 'words' list
@@ -128,7 +136,7 @@ class WhisperXASR:
         if len(audio) < 8000:  # < 0.5 seconds
             return {"text": "", "words": [], "segments": []}
         
-        result = self.transcribe(audio, batch_size=1, initial_prompt=initial_prompt)
+        result = self.transcribe(audio, batch_size=1, initial_prompt=initial_prompt, skip_align=skip_align)
         
         text_parts = []
         all_words = []

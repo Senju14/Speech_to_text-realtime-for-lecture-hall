@@ -6,6 +6,7 @@ class RecordingsManager {
         this.contentEl = document.getElementById('transcriptContent');
         this.titleEl = document.getElementById('recordingTitle');
         this.subtitleEl = document.getElementById('recordingSubtitle');
+        this.summarizeBtn = document.getElementById('summarizeBtn');
         this.selectedId = null;
         this.recordings = [];
         this.menuOpenId = null;
@@ -15,6 +16,7 @@ class RecordingsManager {
         this.loadRecordings();
         this.setupListeners();
         this.setupModals();
+        this.setupSummary();
 
         const preSelected = localStorage.getItem('selectedRecordingId');
         if (preSelected) {
@@ -65,6 +67,7 @@ class RecordingsManager {
                         <div class="context-menu" id="menu-${rec.id}">
                             <div class="context-menu-item" data-action="rename" data-id="${rec.id}">Rename</div>
                             <div class="context-menu-item" data-action="star" data-id="${rec.id}">${rec.starred ? 'Unstar' : 'Star'}</div>
+                            <div class="context-menu-item" data-action="summarize" data-id="${rec.id}">📝 Summarize</div>
                             <div class="context-menu-item has-submenu" data-id="${rec.id}">
                                 Export ▸
                                 <div class="context-submenu">
@@ -136,6 +139,7 @@ class RecordingsManager {
         switch (action) {
             case 'rename': this.showRenameModal(id); break;
             case 'star': this.toggleStar(id); break;
+            case 'summarize': this.summarizeRecording(id); break;
             case 'export': this.exportRecording(id, 'srt'); break;
             case 'export-srt': this.exportRecording(id, 'srt'); break;
             case 'export-vtt': this.exportRecording(id, 'vtt'); break;
@@ -277,6 +281,7 @@ class RecordingsManager {
         const starred = rec.starred ? '⭐ ' : '';
         if (this.titleEl) this.titleEl.textContent = starred + name;
         if (this.subtitleEl) this.subtitleEl.textContent = `${rec.duration || '00:00'} • ${rec.transcript?.length || 0} segments`;
+        if (this.summarizeBtn) this.summarizeBtn.style.display = '';
 
         this.renderTranscript(rec.transcript || []);
     }
@@ -306,11 +311,130 @@ class RecordingsManager {
     showEmpty() {
         if (this.titleEl) this.titleEl.textContent = 'Select a recording';
         if (this.subtitleEl) this.subtitleEl.textContent = '';
+        if (this.summarizeBtn) this.summarizeBtn.style.display = 'none';
 
         const container = this.contentEl?.querySelector('.transcript-container-full') || this.contentEl;
         if (container) {
             container.innerHTML = '<div class="empty-state"><p>Select a recording</p></div>';
         }
+    }
+
+    setupSummary() {
+        // Header summarize button
+        if (this.summarizeBtn) {
+            this.summarizeBtn.onclick = () => {
+                if (this.selectedId) this.summarizeRecording(this.selectedId);
+            };
+        }
+
+        // Summary modal controls
+        const closeModal = () => {
+            document.getElementById('summaryModal')?.classList.remove('active');
+        };
+        document.getElementById('closeSummaryModal')?.addEventListener('click', closeModal);
+        document.getElementById('closeSummaryBtn')?.addEventListener('click', closeModal);
+        document.getElementById('summaryModal')?.addEventListener('click', (e) => {
+            if (e.target.id === 'summaryModal') closeModal();
+        });
+        document.getElementById('copySummaryBtn')?.addEventListener('click', async () => {
+            const content = document.getElementById('summaryContent')?.innerText;
+            if (content) {
+                await navigator.clipboard.writeText(content);
+                this.showToast('Summary copied!', 'success');
+            }
+        });
+    }
+
+    async summarizeRecording(id) {
+        const rec = this.recordings.find(r => String(r.id) === String(id));
+        if (!rec || !rec.transcript || rec.transcript.length === 0) {
+            this.showToast('No transcript to summarize', 'error');
+            return;
+        }
+
+        // Check if we already have a cached summary
+        if (rec.summary) {
+            this.showSummaryModal(rec.summary);
+            return;
+        }
+
+        const btn = this.summarizeBtn;
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = '⏳ Summarizing...';
+        }
+
+        try {
+            // Build transcript text for the API
+            const transcriptText = rec.transcript
+                .map(item => item.vi || item.source || '')
+                .filter(t => t.trim())
+                .join('\n');
+
+            const response = await fetch('/api/summarize', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    transcript: transcriptText,
+                    topic: rec.customName || '',
+                }),
+            });
+
+            if (!response.ok) {
+                throw new Error(`Server error: ${response.status}`);
+            }
+
+            const data = await response.json();
+            const summary = data.summary || 'No summary generated.';
+
+            // Cache the summary
+            rec.summary = summary;
+            this.saveRecordings();
+
+            this.showSummaryModal(summary);
+            this.showToast('Summary generated!', 'success');
+        } catch (err) {
+            console.error('Summarize error:', err);
+            this.showToast('Failed to generate summary. Is the server running?', 'error');
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = '📝 Summarize';
+            }
+        }
+    }
+
+    showSummaryModal(summary) {
+        const modal = document.getElementById('summaryModal');
+        const content = document.getElementById('summaryContent');
+        if (!modal || !content) return;
+
+        // Convert markdown-like formatting to HTML
+        let html = summary
+            .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+            .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+            .replace(/^- (.+)$/gm, '<li>$1</li>')
+            .replace(/\n/g, '<br>');
+
+        content.innerHTML = html;
+        modal.classList.add('active');
+    }
+
+    showToast(message, type = 'info') {
+        const container = document.getElementById('toastContainer');
+        if (!container) return;
+
+        const toast = document.createElement('div');
+        toast.className = `toast toast-${type}`;
+        toast.textContent = message;
+        container.appendChild(toast);
+
+        requestAnimationFrame(() => toast.classList.add('show'));
+        setTimeout(() => {
+            toast.classList.remove('show');
+            setTimeout(() => toast.remove(), 300);
+        }, 3000);
     }
 }
 

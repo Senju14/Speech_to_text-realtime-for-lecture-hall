@@ -60,6 +60,12 @@ HF_CACHE_DIR = "/cache/huggingface"
 NLLB_CACHE_DIR = "/cache/nllb"
 
 # =============================================================================
+# Post-processing (BARTpho syllable correction)
+# =============================================================================
+BARTPHO_ADAPTER = "522H0134-NguyenNhatHuy/bartpho-syllable-correction"
+BARTPHO_DEVICE = "cuda"
+
+# =============================================================================
 # Groq LLM (for context priming & auto-summary)
 # =============================================================================
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")  # From .env or Modal Secret

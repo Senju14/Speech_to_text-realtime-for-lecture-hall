@@ -82,6 +82,9 @@ htmlcov/
 # Gemini artifacts
 .gemini/
 
+# Test results
+test/results/
+
 # Temporary files
 *.tmp
 *.temp

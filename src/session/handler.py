@@ -28,6 +28,7 @@ from src.config import (
 from src.asr import WhisperXASR
 from src.vad import SileroVAD
 from src.translation import NLLBTranslator
+from src.postprocess import BARTphoCorrector
 from src.llm import GroqService
 from src.utils import decode_audio_chunk, decode_audio_bytes
 from src.session.filters import HallucinationFilter
@@ -44,6 +45,7 @@ class ASRService:
     
     def __init__(self):
         self.asr: Optional[WhisperXASR] = None
+        self.corrector: Optional[BARTphoCorrector] = None
         self.translator: Optional[NLLBTranslator] = None
         self.groq: Optional[GroqService] = None
         self.is_initialized = False
@@ -62,6 +64,18 @@ class ASRService:
         )
         await loop.run_in_executor(None, self.asr.load_model)
         logger.info(f"[Model] WhisperX loaded in {time.time() - t0:.1f}s")
+        
+        # Load BARTpho Corrector
+        t0 = time.time()
+        logger.info("[Model] Loading BARTpho Corrector...")
+        from src.config import BARTPHO_ADAPTER, BARTPHO_DEVICE
+        self.corrector = BARTphoCorrector(
+            adapter_id=BARTPHO_ADAPTER,
+            device=BARTPHO_DEVICE,
+            cache_dir=NLLB_CACHE_DIR,
+        )
+        await loop.run_in_executor(None, self.corrector.load_model)
+        logger.info(f"[Model] BARTpho loaded in {time.time() - t0:.1f}s")
         
         # Load NLLB
         t0 = time.time()
@@ -276,9 +290,10 @@ class ASRSession:
         
         Async Streaming Strategy:
         1. Run ASR (WhisperX)
-        2. Send intermediate result immediately (source text only)
-        3. Fire translation async (non-blocking)
-        4. Send final result when translation completes
+        2. Post-process with BARTpho (syllable correction)
+        3. Send intermediate result immediately (source text only)
+        4. Fire translation async (non-blocking)
+        5. Send final result when translation completes
         
         This reduces perceived latency - user sees source text immediately.
         """
@@ -316,6 +331,22 @@ class ASRSession:
             logger.debug(f"[Filter] Skipped: {text[:50]}...")
             return
         
+        # Post-process: BARTpho syllable correction
+        if self.service.corrector and self.service.corrector.is_loaded:
+            pp_start = time.time()
+            corrected = await loop.run_in_executor(
+                None, self.service.corrector.correct, text
+            )
+            pp_time = time.time() - pp_start
+            if corrected and corrected != text:
+                logger.info(f"[PP] \"{text[:40]}\" → \"{corrected[:40]}\" ({pp_time:.2f}s)")
+                text = corrected
+            else:
+                pp_time = 0.0
+        else:
+            pp_time = 0.0
+            return
+        
         self.segment_id += 1
         current_seg_id = self.segment_id
         
@@ -338,13 +369,14 @@ class ASRSession:
                 "words": words,
                 "timing": {
                     "asr_ms": int(asr_time * 1000),
+                    "pp_ms": int(pp_time * 1000),
                     "mt_ms": 0,
                 }
             }))
             
             # Fire translation async (non-blocking)
             asyncio.create_task(
-                self._translate_and_send(current_seg_id, text, words, asr_time)
+                self._translate_and_send(current_seg_id, text, words, asr_time, pp_time)
             )
         else:
             # No translation - send final result directly
@@ -357,11 +389,12 @@ class ASRSession:
                 "words": words,
                 "timing": {
                     "asr_ms": int(asr_time * 1000),
+                    "pp_ms": int(pp_time * 1000),
                     "mt_ms": 0,
                 }
             }))
     
-    async def _translate_and_send(self, segment_id: int, text: str, words: list, asr_time: float):
+    async def _translate_and_send(self, segment_id: int, text: str, words: list, asr_time: float, pp_time: float):
         """
         Async translation task - runs after ASR result is already sent.
         Sends final update with translation when complete.
@@ -389,6 +422,7 @@ class ASRSession:
                 "words": words,
                 "timing": {
                     "asr_ms": int(asr_time * 1000),
+                    "pp_ms": int(pp_time * 1000),
                     "mt_ms": int(mt_time * 1000),
                 }
             }))
@@ -404,6 +438,7 @@ class ASRSession:
                 "words": words,
                 "timing": {
                     "asr_ms": int(asr_time * 1000),
+                    "pp_ms": int(pp_time * 1000),
                     "mt_ms": 0,
                 }
             }))

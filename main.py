@@ -48,6 +48,8 @@ image = (
     )
     # WhisperX (includes faster-whisper, pyannote)
     .pip_install("whisperx")
+    # Post-processing (BARTpho syllable correction)
+    .pip_install("peft>=0.8.0")
     .pip_install(
         "fastapi>=0.104.0",
         "uvicorn>=0.24.0",
@@ -105,6 +107,13 @@ def download_models():
         vad = SileroVAD()
         vad.load_model()
     del vad
+    
+    # BARTpho post-processing
+    from src.postprocess import BARTphoCorrector
+    print("[Pre-download] BARTpho syllable corrector...")
+    corrector = BARTphoCorrector(cache_dir="/cache/huggingface")
+    corrector.load_model()
+    del corrector
     
     print("[Pre-download] Complete!")
 

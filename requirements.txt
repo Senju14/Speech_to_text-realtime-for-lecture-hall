@@ -3,7 +3,7 @@
 # Pin major versions for reproducibility. Modal image uses these too.
 # =============================================================================
 
-# --- Core ML (pin torch for pyannote/whisperx compatibility) ---
+# --- Core ML ---
 torch==2.5.1
 torchaudio==2.5.1
 
@@ -11,11 +11,14 @@ torchaudio==2.5.1
 whisperx
 
 # --- Translation (NLLB) ---
-transformers>=4.35.0
+transformers>=4.45.0
 accelerate>=0.25.0
 sentencepiece>=0.1.99
 safetensors>=0.4.0
 protobuf>=3.20.0
+
+# --- Post-processing (BARTpho syllable correction) ---
+peft>=0.8.0
 
 # --- Audio Processing ---
 numpy>=1.24.0

@@ -5,6 +5,7 @@ WhisperX provides batched inference with:
 - Faster-whisper backend
 - Built-in Pyannote VAD
 - Word-level alignment
+- Multi-language support with lazy alignment model caching
 
 Reference: https://github.com/m-bain/whisperX
 """
@@ -12,12 +13,15 @@ Reference: https://github.com/m-bain/whisperX
 import numpy as np
 import logging
 from dataclasses import replace as dataclass_replace
-from src.config import WHISPER_MODEL, WHISPER_LANGUAGE, WHISPER_COMPUTE_TYPE, ASR_DEVICE
+from src.config import (
+    WHISPER_MODEL, WHISPER_LANGUAGE, WHISPER_COMPUTE_TYPE, ASR_DEVICE,
+    supports_alignment,
+)
 logger = logging.getLogger(__name__)
 
 
 class WhisperXASR:
-    """WhisperX ASR with word-level alignment"""
+    """WhisperX ASR with word-level alignment and multi-language support"""
     
     def __init__(
         self,
@@ -27,16 +31,16 @@ class WhisperXASR:
         compute_type: str = WHISPER_COMPUTE_TYPE,
     ):
         self.model_size = model_size
-        self.language = language
+        self.default_language = language  # Default lang; None = multilingual
         self.device = device
         self.compute_type = compute_type
         
         self.model = None
-        self.align_model = None
-        self.align_metadata = None
+        # Lazy-loaded alignment models: {lang_code: (model, metadata)}
+        self._align_cache = {}
     
     def load_model(self):
-        """Load WhisperX and alignment models"""
+        """Load WhisperX model (multilingual) and default alignment model"""
         if self.model is not None:
             return
         
@@ -46,7 +50,7 @@ class WhisperXASR:
         
         import whisperx
         
-        logger.info(f"Loading WhisperX: {self.model_size}")
+        logger.info(f"Loading WhisperX: {self.model_size} (default lang: {self.default_language or 'multilingual'})")
         
         # Suppress noisy print() from pyannote/pytorch_lightning during loading
         with suppress_stdout():
@@ -54,19 +58,50 @@ class WhisperXASR:
                 self.model_size,
                 self.device,
                 compute_type=self.compute_type,
-                language=self.language,
+                language=self.default_language,
             )
         
-        logger.info(f"Loading alignment model for '{self.language}'")
-        with suppress_stdout():
-            self.align_model, self.align_metadata = whisperx.load_align_model(
-                language_code=self.language,
-                device=self.device,
-            )
+        # Pre-load alignment model for default language
+        if self.default_language and supports_alignment(self.default_language):
+            self._load_align_model(self.default_language)
         
         logger.info("WhisperX ready")
     
-    def transcribe(self, audio: np.ndarray, batch_size: int = 16, initial_prompt: str = None, skip_align: bool = False) -> dict:
+    def _load_align_model(self, language_code: str):
+        """Load and cache alignment model for a specific language"""
+        if language_code in self._align_cache:
+            return self._align_cache[language_code]
+        
+        if not supports_alignment(language_code):
+            logger.debug(f"[Align] No alignment support for '{language_code}'")
+            return None, None
+        
+        try:
+            import whisperx
+            from src.utils import suppress_stdout
+            
+            logger.info(f"[Align] Loading alignment model for '{language_code}'")
+            with suppress_stdout():
+                model, metadata = whisperx.load_align_model(
+                    language_code=language_code,
+                    device=self.device,
+                )
+            self._align_cache[language_code] = (model, metadata)
+            logger.info(f"[Align] Cached alignment model for '{language_code}'")
+            return model, metadata
+        except Exception as e:
+            logger.warning(f"[Align] Failed to load alignment for '{language_code}': {e}")
+            self._align_cache[language_code] = (None, None)
+            return None, None
+    
+    def transcribe(
+        self,
+        audio: np.ndarray,
+        batch_size: int = 16,
+        initial_prompt: str = None,
+        skip_align: bool = False,
+        language: str = None,
+    ) -> dict:
         """
         Transcribe audio with optional word-level alignment
         
@@ -74,17 +109,19 @@ class WhisperXASR:
             audio: float32 audio at 16kHz
             batch_size: Batch size for inference
             initial_prompt: Context keywords to prime the model
-                           (improves accuracy for domain-specific terms)
-            skip_align: If True, skip whisperx.align() for faster streaming.
-                       Word-level timestamps will not be available.
+            skip_align: If True, skip whisperx.align() for faster streaming
+            language: Override language for this call (None = use default or auto-detect)
             
         Returns:
-            dict with 'segments' containing text and word timestamps
+            dict with 'segments' and 'language' (detected language code)
         """
         if self.model is None:
             self.load_model()
         
         import whisperx
+        
+        # Determine language for this transcription
+        lang = language if language is not None else self.default_language
         
         # Set initial_prompt via model options (WhisperX uses TranscriptionOptions,
         # NOT a transcribe() keyword argument)
@@ -96,32 +133,44 @@ class WhisperXASR:
             )
         
         try:
-            # Transcribe
+            # Transcribe (lang=None enables auto-detect)
             result = self.model.transcribe(
                 audio,
                 batch_size=batch_size,
-                language=self.language,
+                language=lang,
             )
         finally:
             # Restore original options (model is shared across sessions)
             if original_options is not None:
                 self.model.options = original_options
         
-        # Skip alignment for real-time streaming (saves ~30-50% latency)
-        # Alignment runs wav2vec2 on the audio again just for word timestamps
-        if not skip_align and self.align_model is not None:
-            result = whisperx.align(
-                result["segments"],
-                self.align_model,
-                self.align_metadata,
-                audio,
-                self.device,
-                return_char_alignments=False,
-            )
+        # Get detected language (WhisperX returns it when auto-detecting)
+        detected_lang = result.get("language", lang)
         
+        # Alignment: use detected language to pick the right model
+        if not skip_align and detected_lang:
+            align_model, align_metadata = self._load_align_model(detected_lang)
+            if align_model is not None:
+                result = whisperx.align(
+                    result["segments"],
+                    align_model,
+                    align_metadata,
+                    audio,
+                    self.device,
+                    return_char_alignments=False,
+                )
+        
+        # Always include detected language in result
+        result["language"] = detected_lang
         return result
     
-    def transcribe_segment(self, audio: np.ndarray, initial_prompt: str = None, skip_align: bool = True) -> dict:
+    def transcribe_segment(
+        self,
+        audio: np.ndarray,
+        initial_prompt: str = None,
+        skip_align: bool = True,
+        language: str = None,
+    ) -> dict:
         """
         Transcribe a single audio segment (optimized for streaming)
         
@@ -129,14 +178,20 @@ class WhisperXASR:
             audio: float32 audio at 16kHz (typically 0.5-10 seconds)
             initial_prompt: Context keywords for domain accuracy
             skip_align: Skip word-level alignment for faster streaming (default: True)
+            language: Override language (None = use default or auto-detect)
             
         Returns:
-            dict with 'text' and 'words' list
+            dict with 'text', 'words', 'language' (detected)
         """
         if len(audio) < 8000:  # < 0.5 seconds
-            return {"text": "", "words": [], "segments": []}
+            return {"text": "", "words": [], "segments": [], "language": language or self.default_language}
         
-        result = self.transcribe(audio, batch_size=1, initial_prompt=initial_prompt, skip_align=skip_align)
+        result = self.transcribe(
+            audio, batch_size=1,
+            initial_prompt=initial_prompt,
+            skip_align=skip_align,
+            language=language,
+        )
         
         text_parts = []
         all_words = []
@@ -155,4 +210,5 @@ class WhisperXASR:
             "text": " ".join(text_parts).strip(),
             "words": all_words,
             "segments": result.get("segments", []),
+            "language": result.get("language", language or self.default_language),
         }

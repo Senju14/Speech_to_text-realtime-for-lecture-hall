@@ -74,9 +74,9 @@ class ASRApp {
 
                 if (data.is_final && (data.source || data.target)) {
                     const id = data.segment_id || Object.keys(this.transcripts).length + 1;
-                    if (!this.transcripts[id]) this.transcripts[id] = { vi: '', en: '' };
-                    if (data.source) this.transcripts[id].vi = data.source;
-                    if (data.target) this.transcripts[id].en = data.target;
+                    if (!this.transcripts[id]) this.transcripts[id] = { source: '', target: '' };
+                    if (data.source) this.transcripts[id].source = data.source;
+                    if (data.target) this.transcripts[id].target = data.target;
                 }
             } else if (data.type === 'summary') {
                 this.uiMgr.showSummary(data);
@@ -142,7 +142,7 @@ class ASRApp {
         const summarizeBtn = document.getElementById('summarizeBtn');
         if (summarizeBtn) {
             summarizeBtn.onclick = () => {
-                const segments = Object.values(this.transcripts).filter(t => t.vi || t.en);
+                const segments = Object.values(this.transcripts).filter(t => t.source || t.target);
                 if (segments.length === 0) {
                     this.uiMgr.showNotification('No transcripts to summarize', 'warning');
                     return;
@@ -195,7 +195,7 @@ class ASRApp {
             exportDropdown.querySelectorAll('[data-export]').forEach(item => {
                 item.onclick = () => {
                     const format = item.dataset.export;
-                    const segments = Object.values(this.transcripts).filter(t => t.vi || t.en);
+                    const segments = Object.values(this.transcripts).filter(t => t.source || t.target);
 
                     if (segments.length === 0) {
                         this.uiMgr.showNotification('No transcripts');
@@ -305,7 +305,7 @@ class ASRApp {
     }
 
     saveRecording() {
-        const segments = Object.values(this.transcripts).filter(t => t.vi || t.en);
+        const segments = Object.values(this.transcripts).filter(t => t.source || t.target);
         if (segments.length === 0) return;
 
         try {
@@ -318,10 +318,8 @@ class ASRApp {
                 time: now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
                 duration: this.uiMgr.el.timer?.textContent || '00:00',
                 transcript: segments.map(t => ({
-                    vi: t.vi || '',
-                    en: t.en || '',
-                    source: t.vi || '',
-                    target: t.en || ''
+                    source: t.source || '',
+                    target: t.target || ''
                 }))
             };
 

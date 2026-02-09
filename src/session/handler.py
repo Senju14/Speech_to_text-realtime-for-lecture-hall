@@ -9,6 +9,7 @@ Optimizations:
 - Async streaming: Sends ASR result immediately, translation follows async
 - Context priming: Groq expands topic keywords -> WhisperX initial_prompt
 - Auto summary: Groq summarizes lecture on session end
+- Multi-language: Per-session source/target language with dynamic switching
 """
 
 import json
@@ -24,6 +25,7 @@ from src.config import (
     NLLB_MODEL, NLLB_SRC_LANG, NLLB_TGT_LANG, NLLB_DEVICE, NLLB_CACHE_DIR,
     MIN_SILENCE_DURATION, MAX_BUFFER_DURATION, MIN_SEGMENT_DURATION,
     SAMPLE_RATE, AUTO_SUMMARY_MIN_DURATION,
+    iso_to_nllb,
 )
 from src.asr import WhisperXASR
 from src.vad import SileroVAD
@@ -66,16 +68,19 @@ class ASRService:
         logger.info(f"[Model] WhisperX loaded in {time.time() - t0:.1f}s")
         
         # Load BARTpho Corrector
-        t0 = time.time()
-        logger.info("[Model] Loading BARTpho Corrector...")
-        from src.config import BARTPHO_ADAPTER, BARTPHO_DEVICE
-        self.corrector = BARTphoCorrector(
-            adapter_id=BARTPHO_ADAPTER,
-            device=BARTPHO_DEVICE,
-            cache_dir=NLLB_CACHE_DIR,
-        )
-        await loop.run_in_executor(None, self.corrector.load_model)
-        logger.info(f"[Model] BARTpho loaded in {time.time() - t0:.1f}s")
+        from src.config import BARTPHO_ADAPTER, BARTPHO_DEVICE, ENABLE_BARTPHO
+        if ENABLE_BARTPHO:
+            t0 = time.time()
+            logger.info("[Model] Loading BARTpho Corrector...")
+            self.corrector = BARTphoCorrector(
+                adapter_id=BARTPHO_ADAPTER,
+                device=BARTPHO_DEVICE,
+                cache_dir=NLLB_CACHE_DIR,
+            )
+            await loop.run_in_executor(None, self.corrector.load_model)
+            logger.info(f"[Model] BARTpho loaded in {time.time() - t0:.1f}s")
+        else:
+            logger.info("[Model] BARTpho disabled (ENABLE_BARTPHO=False)")
         
         # Load NLLB
         t0 = time.time()
@@ -176,8 +181,9 @@ class ASRSession:
     
     async def _handle_start(self, data: dict):
         """Start recording session"""
-        self.src_lang = data.get("src_lang", "vi")
-        self.tgt_lang = data.get("tgt_lang", "en")
+        # Accept both camelCase (frontend) and snake_case keys
+        self.src_lang = data.get("srcLang") or data.get("src_lang") or "vi"
+        self.tgt_lang = data.get("tgtLang") or data.get("tgt_lang") or "en"
         self.do_translate = data.get("translate", True)
         self.topic = self._sanitize_topic(data.get("topic", ""))
         
@@ -188,11 +194,24 @@ class ASRSession:
         self.last_speech_time = time.time()
         self.all_transcripts = []
         self.initial_prompt = ""
+        self._detected_lang = None  # For auto-detect mode
         
         self.vad.load_model()
         self.vad.reset_state()
         
-        # === Context Priming: Expand topic into keywords via Groq ===
+        # === Context Priming ===
+        # 1. Default vocab primer for Vietnamese (helps Whisper with code-switching)
+        base_prompt = ""
+        if self.src_lang in ("vi", "auto"):
+            base_prompt = (
+                "AI, ML, deep learning, machine learning, NLP, ChatGPT, GPT, "
+                "Gemini, OpenAI, Google, transformer, neural network, LLM, "
+                "computer vision, robotics, Python, TensorFlow, PyTorch, "
+                "dataset, token, model, fine-tuning, pre-training, embedding, "
+                "attention, inference, GPU, API, framework, server, deploy"
+            )
+        
+        # 2. Expand topic into keywords via Groq (if topic provided)
         if self.topic and self.service.groq and self.service.groq.is_available:
             try:
                 await self._send_log("Generating keywords from topic...", "info")
@@ -200,11 +219,16 @@ class ASRSession:
                     self.topic, language=self.src_lang
                 )
                 if keywords:
-                    self.initial_prompt = keywords
-                    logger.info(f"[Context] Primed with: {keywords[:80]}...")
+                    self.initial_prompt = (base_prompt + ", " + keywords) if base_prompt else keywords
+                    logger.info(f"[Context] Primed with: {self.initial_prompt[:80]}...")
+                else:
+                    self.initial_prompt = base_prompt
             except Exception as e:
                 logger.error(f"[Context] Keyword expansion failed: {e}")
+                self.initial_prompt = base_prompt
                 await self._send_log("Keyword generation failed, continuing without", "warning")
+        else:
+            self.initial_prompt = base_prompt
         
         logger.info(f"[Session] Started ({self.src_lang} → {self.tgt_lang})"
               f"{' | Topic: ' + self.topic[:40] if self.topic else ''}")
@@ -289,11 +313,12 @@ class ASRSession:
         Finalize and transcribe current audio buffer
         
         Async Streaming Strategy:
-        1. Run ASR (WhisperX)
-        2. Post-process with BARTpho (syllable correction)
-        3. Send intermediate result immediately (source text only)
-        4. Fire translation async (non-blocking)
-        5. Send final result when translation completes
+        1. Run ASR (WhisperX) with initial_prompt vocab priming
+        2. Post-process with BARTpho (Vietnamese syllable correction)
+        3. Code-switch normalize (phonetic Vietnamese → English terms)
+        4. Send intermediate result immediately (source text only)
+        5. Fire translation async (non-blocking)
+        6. Send final result when translation completes
         
         This reduces perceived latency - user sees source text immediately.
         """
@@ -313,15 +338,26 @@ class ASRSession:
         loop = asyncio.get_event_loop()
         
         # Transcribe with WhisperX (with context priming if available)
+        # Pass session language to WhisperX (None for auto-detect)
+        whisper_lang = self.src_lang if self.src_lang != "auto" else None
         start_time = time.time()
         result = await loop.run_in_executor(
             None,
-            lambda: self.service.asr.transcribe_segment(audio, initial_prompt=self.initial_prompt)
+            lambda: self.service.asr.transcribe_segment(
+                audio,
+                initial_prompt=self.initial_prompt,
+                language=whisper_lang,
+            )
         )
         asr_time = time.time() - start_time
         
         text = result.get("text", "").strip()
         words = result.get("words", [])
+        detected_lang = result.get("language", self.src_lang)
+        
+        # Update src_lang if auto-detected (for downstream translation)
+        if self.src_lang == "auto" and detected_lang:
+            self._detected_lang = detected_lang
         
         if not text:
             return
@@ -331,8 +367,11 @@ class ASRSession:
             logger.debug(f"[Filter] Skipped: {text[:50]}...")
             return
         
-        # Post-process: BARTpho syllable correction
-        if self.service.corrector and self.service.corrector.is_loaded:
+        # Post-process: BARTpho syllable correction (Vietnamese only)
+        effective_src = detected_lang if self.src_lang == "auto" else self.src_lang
+        if (effective_src == "vi"
+            and self.service.corrector
+            and self.service.corrector.is_loaded):
             pp_start = time.time()
             corrected = await loop.run_in_executor(
                 None, self.service.corrector.correct, text
@@ -345,7 +384,6 @@ class ASRSession:
                 pp_time = 0.0
         else:
             pp_time = 0.0
-            return
         
         self.segment_id += 1
         current_seg_id = self.segment_id
@@ -402,11 +440,20 @@ class ASRSession:
         loop = asyncio.get_event_loop()
         
         try:
+            # Resolve NLLB language codes for this session
+            effective_src = getattr(self, '_detected_lang', self.src_lang)
+            if self.src_lang == "auto" and effective_src:
+                nllb_src = iso_to_nllb(effective_src)
+            else:
+                nllb_src = iso_to_nllb(self.src_lang)
+            nllb_tgt = iso_to_nllb(self.tgt_lang)
+            
             start_time = time.time()
             translation = await loop.run_in_executor(
                 None,
-                self.service.translator.translate,
-                text
+                lambda: self.service.translator.translate(
+                    text, src_lang=nllb_src, tgt_lang=nllb_tgt
+                )
             )
             mt_time = time.time() - start_time
             

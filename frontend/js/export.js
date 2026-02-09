@@ -24,8 +24,8 @@ export function exportSRT(transcripts) {
         const start = formatTime(startH, startM, startS);
         const end = formatTime(endH, endM, endS);
 
-        const text1 = t.vi || t.source || '';
-        const text2 = t.en || t.target || '';
+        const text1 = t.source || '';
+        const text2 = t.target || '';
 
         srt += `${i + 1}\n`;
         srt += `${start} --> ${end}\n`;
@@ -60,8 +60,8 @@ export function exportVTT(transcripts) {
         const start = formatTime(time);
         const end = formatTime(time + segDuration);
 
-        const text1 = t.vi || t.source || '';
-        const text2 = t.en || t.target || '';
+        const text1 = t.source || '';
+        const text2 = t.target || '';
 
         vtt += `${i + 1}\n`;
         vtt += `${start} --> ${end}\n`;
@@ -92,9 +92,9 @@ export function exportTXT(transcripts) {
     }
 
     const lines = transcripts.map(t => {
-        const vi = t.vi || t.source || '';
-        const en = t.en || t.target || '';
-        return en ? `${vi}\n> ${en}` : vi;
+        const src = t.source || '';
+        const tgt = t.target || '';
+        return tgt ? `${src}\n> ${tgt}` : src;
     });
 
     downloadFile('transcript.txt', lines.join('\n\n'), 'text/plain');

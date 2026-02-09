@@ -14,7 +14,7 @@ import os
 # WhisperX ASR
 # =============================================================================
 WHISPER_MODEL = "large-v3"
-WHISPER_LANGUAGE = "vi"
+WHISPER_LANGUAGE = None  # None = multilingual (auto-detect per session)
 WHISPER_COMPUTE_TYPE = "float16"
 WHISPER_BATCH_SIZE = 16
 ASR_DEVICE = "cuda"
@@ -62,6 +62,7 @@ NLLB_CACHE_DIR = "/cache/nllb"
 # =============================================================================
 # Post-processing (BARTpho syllable correction)
 # =============================================================================
+ENABLE_BARTPHO = False  # Set False to skip BARTpho post-processing
 BARTPHO_ADAPTER = "522H0134-NguyenNhatHuy/bartpho-syllable-correction"
 BARTPHO_DEVICE = "cuda"
 

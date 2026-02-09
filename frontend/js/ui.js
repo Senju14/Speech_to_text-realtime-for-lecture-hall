@@ -26,9 +26,12 @@ class UIManager {
             toastContainer: document.getElementById('toastContainer'),
             clearModal: document.getElementById('clearModal'),
             deleteRecordingModal: document.getElementById('deleteRecordingModal'),
-            langBtn: document.getElementById('langBtn'),
-            langText: document.getElementById('langText'),
-            langDropdown: document.getElementById('langDropdown'),
+            srcLangBtn: document.getElementById('srcLangBtn'),
+            srcLangText: document.getElementById('srcLangText'),
+            srcLangDropdown: document.getElementById('srcLangDropdown'),
+            tgtLangBtn: document.getElementById('tgtLangBtn'),
+            tgtLangText: document.getElementById('tgtLangText'),
+            tgtLangDropdown: document.getElementById('tgtLangDropdown'),
             settingsBtn: document.getElementById('settingsBtn'),
             settingsDropdown: document.getElementById('settingsDropdown'),
             lectureTopic: document.getElementById('lectureTopic'),
@@ -113,21 +116,40 @@ class UIManager {
             this.el.sidebarToggle.onclick = () => this.toggleSidebar();
         }
 
-        // Language selection
-        if (this.el.langBtn) {
-            this.el.langBtn.onclick = (e) => {
+        // Language selection — Source
+        if (this.el.srcLangBtn) {
+            this.el.srcLangBtn.onclick = (e) => {
                 e.stopPropagation();
-                this.el.langDropdown?.classList.toggle('active');
+                this.el.srcLangDropdown?.classList.toggle('active');
+                this.el.tgtLangDropdown?.classList.remove('active');
             };
         }
 
-        if (this.el.langDropdown) {
-            this.el.langDropdown.querySelectorAll('.dropdown-item').forEach(item => {
+        if (this.el.srcLangDropdown) {
+            this.el.srcLangDropdown.querySelectorAll('.dropdown-item').forEach(item => {
                 item.onclick = () => {
-                    const src = item.dataset.src;
-                    const tgt = item.dataset.tgt;
-                    this.setLanguage(src, tgt);
-                    this.el.langDropdown.classList.remove('active');
+                    const lang = item.dataset.lang;
+                    this.setSourceLang(lang, item.textContent.trim());
+                    this.el.srcLangDropdown.classList.remove('active');
+                };
+            });
+        }
+
+        // Language selection — Target
+        if (this.el.tgtLangBtn) {
+            this.el.tgtLangBtn.onclick = (e) => {
+                e.stopPropagation();
+                this.el.tgtLangDropdown?.classList.toggle('active');
+                this.el.srcLangDropdown?.classList.remove('active');
+            };
+        }
+
+        if (this.el.tgtLangDropdown) {
+            this.el.tgtLangDropdown.querySelectorAll('.dropdown-item').forEach(item => {
+                item.onclick = () => {
+                    const lang = item.dataset.lang;
+                    this.setTargetLang(lang, item.textContent.trim());
+                    this.el.tgtLangDropdown.classList.remove('active');
                 };
             });
         }
@@ -159,31 +181,45 @@ class UIManager {
 
         // Close dropdowns on outside click
         document.addEventListener('click', () => {
-            this.el.langDropdown?.classList.remove('active');
+            this.el.srcLangDropdown?.classList.remove('active');
+            this.el.tgtLangDropdown?.classList.remove('active');
             this.el.settingsDropdown?.classList.remove('active');
         });
 
         this.loadRecordingsSidebar();
     }
 
-    setLanguage(src, tgt) {
-        this.srcLang = src === 'auto' ? null : src;
-        this.tgtLang = tgt || null;
-        this.doTranslate = !!tgt;
-
-        let label = '';
-        if (src === 'auto') label = 'Auto';
-        else if (src === 'vi') label = 'Vi';
-        else if (src === 'en') label = 'En';
-
-        if (tgt) {
-            label += ` → ${tgt === 'en' ? 'En' : 'Vi'}`;
-        } else {
-            label += ' only';
+    setSourceLang(lang, label) {
+        this.srcLang = lang;
+        if (this.el.srcLangText) {
+            // Strip emoji flag, keep language name
+            const cleanLabel = label.replace(/^[^\w]+/, '').trim();
+            this.el.srcLangText.textContent = cleanLabel;
         }
+        // Update selected state
+        this.el.srcLangDropdown?.querySelectorAll('.dropdown-item').forEach(item => {
+            item.classList.toggle('selected', item.dataset.lang === lang);
+        });
+        this.showNotification(`Source: ${label}`);
+    }
 
-        if (this.el.langText) this.el.langText.textContent = label;
-        this.showNotification(`Language: ${label}`);
+    setTargetLang(lang, label) {
+        if (lang === 'none') {
+            this.tgtLang = null;
+            this.doTranslate = false;
+        } else {
+            this.tgtLang = lang;
+            this.doTranslate = true;
+        }
+        if (this.el.tgtLangText) {
+            const cleanLabel = label.replace(/^[^\w]+/, '').trim();
+            this.el.tgtLangText.textContent = cleanLabel;
+        }
+        // Update selected state
+        this.el.tgtLangDropdown?.querySelectorAll('.dropdown-item').forEach(item => {
+            item.classList.toggle('selected', item.dataset.lang === lang);
+        });
+        this.showNotification(`Target: ${label}`);
     }
 
     getLanguageSettings() {
@@ -393,9 +429,9 @@ class UIManager {
     async copyTranscripts() {
         const segs = Array.from(this.el.panelContent?.querySelectorAll('.transcript-segment') || []);
         const lines = segs.map(seg => {
-            const vi = seg.querySelector('.vi-text')?.textContent || '';
-            const en = seg.querySelector('.en-text')?.textContent || '';
-            return en ? `${vi}\n> ${en}` : vi;
+            const src = seg.querySelector('.segment-source')?.textContent || '';
+            const tgt = seg.querySelector('.segment-target')?.textContent || '';
+            return tgt ? `${src}\n> ${tgt}` : src;
         }).filter(l => l.trim());
 
         if (lines.length === 0) {

@@ -72,19 +72,57 @@
         <div class="transcript-panel">
           <div class="panel-header">
             <!-- Language Dropdown in Panel Header -->
-            <div class="dropdown">
-              <button class="dropdown-btn" id="langBtn">
-                <span id="langText">Vi → En</span>
-                <span class="dropdown-arrow"></span>
-              </button>
-              <div class="dropdown-menu" id="langDropdown">
-                <div class="dropdown-item" data-src="vi" data-tgt="en">Vietnamese → English</div>
-                <div class="dropdown-item" data-src="en" data-tgt="vi">English → Vietnamese</div>
-                <div class="dropdown-divider"></div>
-                <div class="dropdown-item" data-src="vi" data-tgt="">Vietnamese only</div>
-                <div class="dropdown-item" data-src="en" data-tgt="">English only</div>
-                <div class="dropdown-divider"></div>
-                <div class="dropdown-item" data-src="auto" data-tgt="en">Auto-detect</div>
+            <div class="lang-selectors">
+              <div class="dropdown">
+                <button class="dropdown-btn lang-select-btn" id="srcLangBtn">
+                  <span id="srcLangText">Vietnamese</span>
+                  <span class="dropdown-arrow"></span>
+                </button>
+                <div class="dropdown-menu lang-dropdown" id="srcLangDropdown">
+                  <div class="dropdown-item selected" data-lang="vi">🇻🇳 Vietnamese</div>
+                  <div class="dropdown-item" data-lang="en">🇺🇸 English</div>
+                  <div class="dropdown-item" data-lang="zh">🇨🇳 Chinese</div>
+                  <div class="dropdown-item" data-lang="ja">🇯🇵 Japanese</div>
+                  <div class="dropdown-item" data-lang="ko">🇰🇷 Korean</div>
+                  <div class="dropdown-item" data-lang="fr">🇫🇷 French</div>
+                  <div class="dropdown-item" data-lang="de">🇩🇪 German</div>
+                  <div class="dropdown-item" data-lang="es">🇪🇸 Spanish</div>
+                  <div class="dropdown-item" data-lang="th">🇹🇭 Thai</div>
+                  <div class="dropdown-item" data-lang="id">🇮🇩 Indonesian</div>
+                  <div class="dropdown-item" data-lang="ru">🇷🇺 Russian</div>
+                  <div class="dropdown-item" data-lang="pt">🇵🇹 Portuguese</div>
+                  <div class="dropdown-item" data-lang="it">🇮🇹 Italian</div>
+                  <div class="dropdown-item" data-lang="ar">🇸🇦 Arabic</div>
+                  <div class="dropdown-item" data-lang="hi">🇮🇳 Hindi</div>
+                  <div class="dropdown-divider"></div>
+                  <div class="dropdown-item" data-lang="auto">🌐 Auto-detect</div>
+                </div>
+              </div>
+              <span class="lang-arrow">→</span>
+              <div class="dropdown">
+                <button class="dropdown-btn lang-select-btn" id="tgtLangBtn">
+                  <span id="tgtLangText">English</span>
+                  <span class="dropdown-arrow"></span>
+                </button>
+                <div class="dropdown-menu lang-dropdown" id="tgtLangDropdown">
+                  <div class="dropdown-item" data-lang="vi">🇻🇳 Vietnamese</div>
+                  <div class="dropdown-item selected" data-lang="en">🇺🇸 English</div>
+                  <div class="dropdown-item" data-lang="zh">🇨🇳 Chinese</div>
+                  <div class="dropdown-item" data-lang="ja">🇯🇵 Japanese</div>
+                  <div class="dropdown-item" data-lang="ko">🇰🇷 Korean</div>
+                  <div class="dropdown-item" data-lang="fr">🇫🇷 French</div>
+                  <div class="dropdown-item" data-lang="de">🇩🇪 German</div>
+                  <div class="dropdown-item" data-lang="es">🇪🇸 Spanish</div>
+                  <div class="dropdown-item" data-lang="th">🇹🇭 Thai</div>
+                  <div class="dropdown-item" data-lang="id">🇮🇩 Indonesian</div>
+                  <div class="dropdown-item" data-lang="ru">🇷🇺 Russian</div>
+                  <div class="dropdown-item" data-lang="pt">🇵🇹 Portuguese</div>
+                  <div class="dropdown-item" data-lang="it">🇮🇹 Italian</div>
+                  <div class="dropdown-item" data-lang="ar">🇸🇦 Arabic</div>
+                  <div class="dropdown-item" data-lang="hi">🇮🇳 Hindi</div>
+                  <div class="dropdown-divider"></div>
+                  <div class="dropdown-item" data-lang="none">🚫 No translation</div>
+                </div>
               </div>
             </div>
             <div class="panel-actions">

@@ -7,6 +7,7 @@
 :root {
     --primary: #3b82f6;
     --primary-dark: #2563eb;
+    --primary-light: #dbeafe;
     --success: #10b981;
     --danger: #ef4444;
     --text: #1f2937;
@@ -146,6 +147,12 @@ body {
 
 .dropdown-item:hover {
     background: var(--bg-gray);
+}
+
+.dropdown-item.selected {
+    background: var(--primary-light, #e0e7ff);
+    color: var(--primary, #4f46e5);
+    font-weight: 600;
 }
 
 .dropdown-item:first-child {
@@ -323,6 +330,35 @@ body {
     display: flex;
     align-items: center;
     gap: 0.5rem;
+}
+
+.lang-selectors {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.lang-selectors .dropdown {
+    position: relative;
+}
+
+.lang-select-btn {
+    padding: 0.35rem 0.7rem;
+    font-size: 0.85rem;
+    min-width: 90px;
+}
+
+.lang-selectors .lang-arrow {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    font-weight: 600;
+    -webkit-user-select: none;
+}
+
+.lang-dropdown {
+    max-height: 320px;
+    overflow-y: auto;
+    min-width: 180px;
 }
 
 .lang-badge {

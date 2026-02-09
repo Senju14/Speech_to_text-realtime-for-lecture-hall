@@ -1,7 +1,7 @@
 """
 NLLB Translation - No Language Left Behind
 
-Optimized for real-time Vietnamese to English translation.
+Multi-language translation with per-request language switching.
 
 Model options:
 - distilled-600M: Fast, low VRAM (recommended for real-time)
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 class NLLBTranslator:
-    """NLLB Machine Translation"""
+    """NLLB Machine Translation with dynamic language switching"""
     
     def __init__(
         self,
@@ -36,8 +36,8 @@ class NLLBTranslator:
         cache_dir: Optional[str] = NLLB_CACHE_DIR,
     ):
         self.model_name = model_name
-        self.src_lang = src_lang
-        self.tgt_lang = tgt_lang
+        self.default_src_lang = src_lang
+        self.default_tgt_lang = tgt_lang
         self.device = device
         self.cache_dir = cache_dir
         
@@ -63,7 +63,7 @@ class NLLBTranslator:
         self.tokenizer = AutoTokenizer.from_pretrained(
             self.model_name,
             cache_dir=self.cache_dir,
-            src_lang=self.src_lang
+            src_lang=self.default_src_lang
         )
         
         # Suppress noisy print() and logging from accelerate/transformers during loading
@@ -94,8 +94,6 @@ class NLLBTranslator:
                         torch_dtype=torch.float16,
                     ).to(self.device)
             else:
-                # distilled-600M fits easily on single GPU - no need for device_map="auto"
-                # This eliminates the "following layers were not sharded" warning
                 self.model = AutoModelForSeq2SeqLM.from_pretrained(
                     self.model_name,
                     cache_dir=self.cache_dir,
@@ -107,16 +105,26 @@ class NLLBTranslator:
         
         logger.info("NLLB ready")
     
-    def translate(self, text: str, max_length: int = NLLB_MAX_LENGTH) -> str:
+    def translate(
+        self,
+        text: str,
+        src_lang: str = None,
+        tgt_lang: str = None,
+        max_length: int = NLLB_MAX_LENGTH,
+    ) -> str:
         """
-        Translate Vietnamese text to English
+        Translate text between any supported NLLB language pair.
         
         Args:
-            text: Vietnamese text
+            text: Source text
+            src_lang: NLLB source language code (e.g. "vie_Latn", "eng_Latn")
+                      Falls back to default if not specified.
+            tgt_lang: NLLB target language code
+                      Falls back to default if not specified.
             max_length: Max output length
             
         Returns:
-            English translation
+            Translated text
         """
         if not text or not text.strip():
             return ""
@@ -124,7 +132,18 @@ class NLLBTranslator:
         if not self.is_loaded:
             self.load_model()
         
+        # Use per-request languages or fall back to defaults
+        src = src_lang or self.default_src_lang
+        tgt = tgt_lang or self.default_tgt_lang
+        
+        # Skip translation if source == target
+        if src == tgt:
+            return text
+        
         try:
+            # Dynamically set tokenizer source language before encoding
+            self.tokenizer.src_lang = src
+            
             inputs = self.tokenizer(
                 text,
                 return_tensors="pt",
@@ -137,7 +156,8 @@ class NLLBTranslator:
             device = next(self.model.parameters()).device
             inputs = {k: v.to(device) for k, v in inputs.items()}
             
-            tgt_lang_id = self.tokenizer.convert_tokens_to_ids(self.tgt_lang)
+            # Dynamically compute target language token ID
+            tgt_lang_id = self.tokenizer.convert_tokens_to_ids(tgt)
             
             with torch.no_grad():
                 outputs = self.model.generate(
@@ -153,5 +173,5 @@ class NLLBTranslator:
             return translated.strip()
             
         except Exception as e:
-            logger.error(f"Translation error: {e}")
+            logger.error(f"Translation error ({src} → {tgt}): {e}")
             return ""

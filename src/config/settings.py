@@ -20,12 +20,32 @@ WHISPER_BATCH_SIZE = 16
 ASR_DEVICE = "cuda"
 
 # =============================================================================
-# Voice Activity Detection
+# Voice Activity Detection (Silero VAD)
 # =============================================================================
 VAD_THRESHOLD = 0.5
-MIN_SILENCE_DURATION = 0.3   # Seconds of silence to finalize segment (tuned for real-time)
-MAX_BUFFER_DURATION = 4.0    # Max buffer duration before force finalize (tuned for real-time)
-MIN_SEGMENT_DURATION = 0.3   # Minimum segment duration to process
+
+# =============================================================================
+# Segmentation (SpeechSegmentBuffer — Ricky's overlap-based architecture)
+# =============================================================================
+MAX_SEGMENT_SEC = 5.0         # Max segment duration before force finalize
+OVERLAP_SEC = 0.8             # Overlap between consecutive segments
+SILENCE_LIMIT = 0.3           # Silence to trigger FINAL (lower = faster response)
+MIN_DECODE_SEC = 1.0          # Min audio duration for partial decode
+
+# Legacy aliases (used by Senju14 handler code)
+MIN_SILENCE_DURATION = SILENCE_LIMIT
+MAX_BUFFER_DURATION = MAX_SEGMENT_SEC
+MIN_SEGMENT_DURATION = 0.3
+
+# =============================================================================
+# Local Agreement (stabilizes partial transcripts — from Ricky)
+# =============================================================================
+AGREEMENT_N = 2               # Number of consecutive agreements needed
+
+# =============================================================================
+# Hallucination Filter
+# =============================================================================
+HALLUCINATION_HISTORY_SIZE = 5
 
 # =============================================================================
 # NLLB Translation
@@ -34,7 +54,10 @@ MIN_SEGMENT_DURATION = 0.3   # Minimum segment duration to process
 # - "facebook/nllb-200-3.3B"        : Best quality, ~13GB VRAM, ~2s/sentence
 # - "facebook/nllb-200-distilled-600M" : Fast, ~2.5GB VRAM, ~0.3s/sentence (RECOMMENDED)
 # - "facebook/nllb-200-1.3B"        : Balance, ~5GB VRAM, ~0.8s/sentence
-NLLB_MODEL = "facebook/nllb-200-distilled-600M"  # Optimized for real-time
+# Options:
+#   - "facebook/nllb-200-3.3B"           (~3.5GB VRAM, higher quality — for thesis)
+#   - "facebook/nllb-200-distilled-600M" (~2.5GB VRAM, faster — for latency-sensitive)
+NLLB_MODEL = "facebook/nllb-200-3.3B"  # Use 3.3B for thesis quality
 
 # 8-bit quantization: Reduces VRAM by ~50%, slight quality loss
 # Requires: pip install bitsandbytes
@@ -62,7 +85,7 @@ NLLB_CACHE_DIR = "/cache/nllb"
 # =============================================================================
 # Post-processing (BARTpho syllable correction)
 # =============================================================================
-ENABLE_BARTPHO = False  # Set False to skip BARTpho post-processing
+ENABLE_BARTPHO = True   # BARTpho syllable correction for Vietnamese (Ricky)
 BARTPHO_ADAPTER = "522H0134-NguyenNhatHuy/bartpho-syllable-correction"
 BARTPHO_DEVICE = "cuda"
 

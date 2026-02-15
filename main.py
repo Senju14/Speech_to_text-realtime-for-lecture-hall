@@ -1,7 +1,14 @@
 """
-ASR Thesis - Vietnamese Speech Recognition with Translation
+ASR Thesis - Vietnamese Speech Recognition with Translation (v7.0)
 
-Modal App using WhisperX for ASR and NLLB for translation.
+Modal App merging best algorithms from both implementations:
+- WhisperX ASR with AdaptiveNormalizer
+- SpeechSegmentBuffer with overlap-based segmentation
+- LocalAgreement for real-time text stabilization
+- Multi-layer hallucination filter (MD5 hash, RMS, confidence)
+- BARTpho 3-layer EN/VI syllable correction
+- NLLB-200 3.3B translation with multi-language support
+- Binary WebSocket, async streaming, Groq context priming
 
 Usage:
     modal deploy main.py     # Deploy to Modal cloud
@@ -95,7 +102,7 @@ def download_models():
     
     # NLLB Translation
     from src.translation import NLLBTranslator
-    print("[Pre-download] NLLB-200 distilled-600M...")
+    print("[Pre-download] NLLB-200 3.3B...")
     translator = NLLBTranslator(cache_dir="/cache/nllb")
     translator.load_model()
     del translator
@@ -182,7 +189,7 @@ class ASR:
         
         from src.api import create_api_routes, handle_websocket
 
-        web_app = FastAPI(title="ASR Thesis", version="2.0")
+        web_app = FastAPI(title="ASR Thesis", version="7.0")
         
         # No-cache middleware for development
         class NoCacheMiddleware(BaseHTTPMiddleware):

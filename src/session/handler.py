@@ -1,15 +1,15 @@
 """
-ASR Session Handler
+ASR Session Handler (Merged v7)
 
-Manages WebSocket sessions for real-time speech recognition.
-Each client connection gets its own ASRSession instance.
+Merges best of both implementations:
+- Senju14/develop: Binary WS, multi-language, async streaming, word timestamps,
+  timing breakdown, asyncio.Lock, NLLB language mapping
+- Ricky13170/main: SpeechSegmentBuffer, LocalAgreement, multi-layer hallucination
+  filter, intermediate decode, pending partial finalize, transcript-history prompt
 
-Optimizations:
-- Binary audio input: Receives raw Int16 bytes (33% smaller than Base64)
-- Async streaming: Sends ASR result immediately, translation follows async
-- Context priming: Groq expands topic keywords -> WhisperX initial_prompt
-- Auto summary: Groq summarizes lecture on session end
-- Multi-language: Per-session source/target language with dynamic switching
+Pipeline per session:
+  Audio → VAD → SpeechSegmentBuffer → WhisperX → HallucinationFilter
+        → LocalAgreement → BARTpho → AsyncStreaming → NLLB Translation
 """
 
 import json
@@ -23,8 +23,9 @@ from typing import Optional
 from src.config import (
     WHISPER_MODEL, WHISPER_LANGUAGE, ASR_DEVICE,
     NLLB_MODEL, NLLB_SRC_LANG, NLLB_TGT_LANG, NLLB_DEVICE, NLLB_CACHE_DIR,
-    MIN_SILENCE_DURATION, MAX_BUFFER_DURATION, MIN_SEGMENT_DURATION,
     SAMPLE_RATE, AUTO_SUMMARY_MIN_DURATION,
+    MAX_SEGMENT_SEC, OVERLAP_SEC, SILENCE_LIMIT, MIN_DECODE_SEC,
+    AGREEMENT_N, HALLUCINATION_HISTORY_SIZE,
     iso_to_nllb,
 )
 from src.asr import WhisperXASR
@@ -34,6 +35,8 @@ from src.postprocess import BARTphoCorrector
 from src.llm import GroqService
 from src.utils import decode_audio_chunk, decode_audio_bytes
 from src.session.filters import HallucinationFilter
+from src.session.speech_segment_buffer import SpeechSegmentBuffer
+from src.session.local_agreement import LocalAgreement
 
 logger = logging.getLogger(__name__)
 
@@ -110,63 +113,97 @@ class ASRService:
 
 class ASRSession:
     """
-    ASR Session - handles one WebSocket connection
-    
-    Manages audio buffering, VAD, transcription, and translation
-    for a single client.
+    Per-WebSocket session with segment-based processing.
+
+    Uses SpeechSegmentBuffer for overlap-based segmentation and
+    LocalAgreement for partial text stabilization (reduces flicker).
     """
-    
+
+    PARTIAL_FINALIZE_TIMEOUT = 3.0  # seconds before auto-finalizing partials
+
     def __init__(self, service: ASRService):
         self.service = service
         self.out_queue = asyncio.Queue()
-        
+
         # State
         self.is_recording = False
         self.lock = asyncio.Lock()
         self.segment_id = 0
-        
-        # Audio buffer
-        self.audio_buffer = np.array([], dtype=np.float32)
-        self.last_speech_time = 0.0
         self.session_start_time = 0.0
-        
-        # Config
+
+        # Ricky: Segment-based processing state
+        self.last_stable = ""
+        self.pending_partial_text = None
+        self.pending_partial_time = None
+        self.transcript_history = []
+        self._last_intermediate_decode = 0.0
+
+        # Language config (per-session, set by client)
         self.src_lang = "vi"
         self.tgt_lang = "en"
         self.do_translate = True
-        
-        # Context priming (Groq)
+
+        # Context priming
         self.topic = ""
-        self.initial_prompt = ""  # Keywords for WhisperX
-        self.all_transcripts = []  # Collect transcripts for summary
-        
-        # Components
+        self.initial_prompt = ""
+        self.all_transcripts = []
+        self._detected_lang = None
+
+        # Components (Ricky's segment-based architecture)
         self.vad = SileroVAD()
-        self.filter = HallucinationFilter()
-    
+        self.segmenter = SpeechSegmentBuffer(
+            sample_rate=SAMPLE_RATE,
+            max_sec=MAX_SEGMENT_SEC,
+            overlap_sec=OVERLAP_SEC,
+            silence_limit=SILENCE_LIMIT,
+        )
+        self.agreement = LocalAgreement(n=AGREEMENT_N)
+        self.hallucination_filter = HallucinationFilter(
+            history_size=HALLUCINATION_HISTORY_SIZE,
+        )
+
+    # ─── Helpers ──────────────────────────────────────────────────────
+
     async def _send_log(self, message: str, level: str = "info"):
-        """Send structured log message to client (for toast notifications)"""
+        """Send structured log to client (toast notification)"""
         await self.out_queue.put(json.dumps({
-            "type": "log",
-            "level": level,
-            "message": message,
+            "type": "log", "level": level, "message": message,
         }))
 
     @staticmethod
     def _sanitize_topic(topic: str) -> str:
-        """Sanitize user-provided topic input"""
         if not topic:
             return ""
-        # Strip control characters, limit length
         topic = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', topic)
         return topic.strip()[:200]
 
+    def _get_timestamp(self) -> str:
+        """Session timestamp in MM:SS format"""
+        if not self.session_start_time:
+            return "00:00"
+        elapsed = time.time() - self.session_start_time
+        return f"{int(elapsed // 60):02d}:{int(elapsed % 60):02d}"
+
+    def _build_prompt(self) -> str:
+        """Build Whisper initial_prompt from keywords + recent history."""
+        parts = []
+        if self.initial_prompt:
+            parts.append(self.initial_prompt)
+        if self.transcript_history:
+            recent = " ".join(self.transcript_history[-2:])
+            if len(recent) > 150:
+                recent = recent[-150:]
+            parts.append(recent)
+        return ", ".join(parts) if parts else ""
+
+    # ─── Message Routing ──────────────────────────────────────────────
+
     async def handle_incoming(self, message: str):
-        """Handle incoming WebSocket message"""
+        """Handle incoming WebSocket text message"""
         try:
             data = json.loads(message)
             msg_type = data.get("type")
-            
+
             if msg_type == "start":
                 await self._handle_start(data)
             elif msg_type == "audio":
@@ -175,32 +212,42 @@ class ASRSession:
                 await self._handle_stop()
             elif msg_type == "summarize":
                 await self._handle_summarize()
-                
+            elif msg_type == "ping":
+                await self.out_queue.put(json.dumps({"type": "pong"}))
         except Exception as e:
             logger.error(f"Error handling message: {e}")
-    
+
+    # ─── Start ────────────────────────────────────────────────────────
+
     async def _handle_start(self, data: dict):
-        """Start recording session"""
-        # Accept both camelCase (frontend) and snake_case keys
+        """Start recording session with multi-language support"""
+        # Language config from client
         self.src_lang = data.get("srcLang") or data.get("src_lang") or "vi"
         self.tgt_lang = data.get("tgtLang") or data.get("tgt_lang") or "en"
         self.do_translate = data.get("translate", True)
         self.topic = self._sanitize_topic(data.get("topic", ""))
-        
+
+        # Reset state
         self.is_recording = True
         self.segment_id = 0
-        self.audio_buffer = np.array([], dtype=np.float32)
         self.session_start_time = time.time()
-        self.last_speech_time = time.time()
         self.all_transcripts = []
         self.initial_prompt = ""
-        self._detected_lang = None  # For auto-detect mode
-        
+        self._detected_lang = None
+        self.last_stable = ""
+        self.pending_partial_text = None
+        self.pending_partial_time = None
+        self.transcript_history = []
+        self._last_intermediate_decode = 0.0
+
+        # Reset all components
         self.vad.load_model()
         self.vad.reset_state()
-        
+        self.segmenter.reset()
+        self.agreement.reset()
+        self.hallucination_filter.reset()
+
         # === Context Priming ===
-        # 1. Default vocab primer for Vietnamese (helps Whisper with code-switching)
         base_prompt = ""
         if self.src_lang in ("vi", "auto"):
             base_prompt = (
@@ -210,8 +257,7 @@ class ASRSession:
                 "dataset, token, model, fine-tuning, pre-training, embedding, "
                 "attention, inference, GPU, API, framework, server, deploy"
             )
-        
-        # 2. Expand topic into keywords via Groq (if topic provided)
+
         if self.topic and self.service.groq and self.service.groq.is_available:
             try:
                 await self._send_log("Generating keywords from topic...", "info")
@@ -219,226 +265,349 @@ class ASRSession:
                     self.topic, language=self.src_lang
                 )
                 if keywords:
-                    self.initial_prompt = (base_prompt + ", " + keywords) if base_prompt else keywords
+                    self.initial_prompt = (
+                        (base_prompt + ", " + keywords) if base_prompt else keywords
+                    )
                     logger.info(f"[Context] Primed with: {self.initial_prompt[:80]}...")
                 else:
                     self.initial_prompt = base_prompt
             except Exception as e:
                 logger.error(f"[Context] Keyword expansion failed: {e}")
                 self.initial_prompt = base_prompt
-                await self._send_log("Keyword generation failed, continuing without", "warning")
+                await self._send_log(
+                    "Keyword generation failed, continuing without", "warning"
+                )
         else:
             self.initial_prompt = base_prompt
-        
-        logger.info(f"[Session] Started ({self.src_lang} → {self.tgt_lang})"
-              f"{' | Topic: ' + self.topic[:40] if self.topic else ''}")
-        
+
+        logger.info(
+            f"[Session] Started ({self.src_lang} → {self.tgt_lang})"
+            f"{' | Topic: ' + self.topic[:40] if self.topic else ''}"
+        )
+
         await self.out_queue.put(json.dumps({
             "type": "status",
             "status": "started",
             "topic": self.topic,
             "primed": bool(self.initial_prompt),
         }))
-    
+
+    # ─── Audio Processing (Segment-based) ─────────────────────────────
+
     async def _handle_audio(self, data: dict):
-        """Process incoming audio chunk (legacy Base64 path)"""
+        """Legacy Base64 audio path"""
         if not self.is_recording:
             return
-        
         async with self.lock:
-            # Decode audio from base64
             audio_b64 = data.get("audio", "")
             audio_chunk = decode_audio_chunk(audio_b64)
             await self._process_audio_chunk(audio_chunk)
-    
+
     async def handle_binary_audio(self, audio_bytes: bytes):
-        """Process incoming binary audio chunk (optimized path)"""
+        """Optimized binary audio path (Int16 → Float32)"""
         if not self.is_recording:
             return
-        
         async with self.lock:
-            # Decode raw Int16 bytes to Float32
             audio_chunk = decode_audio_bytes(audio_bytes)
             await self._process_audio_chunk(audio_chunk)
-    
+
     async def _process_audio_chunk(self, audio_chunk: np.ndarray):
-        """Common audio processing logic"""
+        """
+        Segment-based audio processing (Ricky's architecture):
+        1. Check pending partial timeout
+        2. VAD → detect speech (with RMS silence skip)
+        3. SpeechSegmentBuffer → accumulate & detect segment boundaries
+        4. If no boundary: intermediate decode for live feedback
+        5. On boundary: full decode pipeline
+        """
         if len(audio_chunk) == 0:
             return
-        
-        # Append to buffer
-        self.audio_buffer = np.concatenate([self.audio_buffer, audio_chunk])
-        
-        # Check VAD
-        has_speech = self.vad.is_speech(audio_chunk)
-        current_time = time.time()
-        
-        if has_speech:
-            self.last_speech_time = current_time
-        
-        # Calculate durations
-        buffer_duration = len(self.audio_buffer) / SAMPLE_RATE
-        silence_duration = current_time - self.last_speech_time
-        
-        # Send buffering indicator every ~2s so user sees activity
-        if has_speech and buffer_duration > 1.0 and int(buffer_duration) % 2 == 0:
-            # Send a lightweight "listening" indicator
-            elapsed = buffer_duration
-            if not hasattr(self, '_last_buffer_notify') or current_time - self._last_buffer_notify > 1.5:
-                self._last_buffer_notify = current_time
-                await self.out_queue.put(json.dumps({
-                    "type": "transcript",
-                    "segment_id": self.segment_id + 1,
-                    "source": "...",
-                    "target": "",
-                    "is_final": False,
-                }))
-        
-        # Check finalize conditions
-        should_finalize = False
-        reason = ""
-        
-        if buffer_duration >= MAX_BUFFER_DURATION:
-            should_finalize = True
-            reason = f"max {buffer_duration:.1f}s"
-        elif silence_duration >= MIN_SILENCE_DURATION and buffer_duration >= MIN_SEGMENT_DURATION:
-            should_finalize = True
-            reason = f"silence {silence_duration:.1f}s"
-        
-        if should_finalize:
-            await self._finalize_segment(reason)
-    
-    async def _finalize_segment(self, reason: str):
-        """
-        Finalize and transcribe current audio buffer
-        
-        Async Streaming Strategy:
-        1. Run ASR (WhisperX) with initial_prompt vocab priming
-        2. Post-process with BARTpho (Vietnamese syllable correction)
-        3. Code-switch normalize (phonetic Vietnamese → English terms)
-        4. Send intermediate result immediately (source text only)
-        5. Fire translation async (non-blocking)
-        6. Send final result when translation completes
-        
-        This reduces perceived latency - user sees source text immediately.
-        """
-        min_samples = int(MIN_SEGMENT_DURATION * SAMPLE_RATE)
-        
-        if len(self.audio_buffer) < min_samples:
-            self.audio_buffer = np.array([], dtype=np.float32)
+
+        # Check pending partial timeout
+        if self.pending_partial_text and self.pending_partial_time:
+            if time.time() - self.pending_partial_time > self.PARTIAL_FINALIZE_TIMEOUT:
+                await self._finalize_pending_partial()
+
+        # RMS-based silence skip (avoids unnecessary VAD inference)
+        rms = float(np.sqrt(np.mean(audio_chunk ** 2)))
+        if rms < 0.003:
+            is_speech = False
+        else:
+            is_speech = self.vad.is_speech(audio_chunk)
+
+        # Timestamp within session
+        now_ts = time.time() - self.session_start_time
+
+        # Feed to segment buffer
+        result = self.segmenter.process(audio_chunk, is_speech, now_ts)
+
+        if result is None:
+            # No segment boundary — try intermediate decode for live feedback
+            buffer_duration = self.segmenter.get_current_duration()
+
+            if (buffer_duration >= 2.0
+                    and now_ts - self._last_intermediate_decode > 1.5):
+                self._last_intermediate_decode = now_ts
+                current_audio = self.segmenter.get_current_audio()
+
+                if len(current_audio) > SAMPLE_RATE:  # > 1 second
+                    asyncio.create_task(
+                        self._decode_intermediate(current_audio)
+                    )
             return
-        
-        # Copy and clear buffer
-        audio = self.audio_buffer.copy()
-        self.audio_buffer = np.array([], dtype=np.float32)
-        self.last_speech_time = time.time()
-        
-        logger.info(f"[VAD] Finalize ({reason})")
-        
+
+        # Segment boundary detected
+        kind, chunk = result
+        duration = len(chunk) / SAMPLE_RATE
+        logger.info(f"[Segment] {kind.upper()} | {duration:.2f}s")
+
+        await self._decode_segment(chunk, is_final=(kind == "final"))
+    
+    # ─── Decode Pipeline ─────────────────────────────────────────────
+
+    async def _decode_segment(self, audio: np.ndarray, is_final: bool):
+        """
+        Full decode pipeline for a completed segment:
+        WhisperX → HallucinationFilter → LocalAgreement → BARTpho → Stream
+        """
+        duration = len(audio) / SAMPLE_RATE
+
+        if not is_final and duration < MIN_DECODE_SEC:
+            logger.debug("Skip PARTIAL (too short)")
+            return
+
         loop = asyncio.get_event_loop()
-        
-        # Transcribe with WhisperX (with context priming if available)
-        # Pass session language to WhisperX (None for auto-detect)
-        whisper_lang = self.src_lang if self.src_lang != "auto" else None
         start_time = time.time()
+
+        prompt = self._build_prompt()
+        whisper_lang = self.src_lang if self.src_lang != "auto" else None
+
         result = await loop.run_in_executor(
             None,
             lambda: self.service.asr.transcribe_segment(
                 audio,
-                initial_prompt=self.initial_prompt,
+                initial_prompt=prompt,
                 language=whisper_lang,
             )
         )
         asr_time = time.time() - start_time
-        
+
         text = result.get("text", "").strip()
         words = result.get("words", [])
         detected_lang = result.get("language", self.src_lang)
-        
-        # Update src_lang if auto-detected (for downstream translation)
+
         if self.src_lang == "auto" and detected_lang:
             self._detected_lang = detected_lang
-        
+
         if not text:
             return
-        
-        # Filter hallucinations
-        if self.filter.is_hallucination(text):
-            logger.debug(f"[Filter] Skipped: {text[:50]}...")
-            return
-        
-        # Post-process: BARTpho syllable correction (Vietnamese only)
-        effective_src = detected_lang if self.src_lang == "auto" else self.src_lang
-        if (effective_src == "vi"
-            and self.service.corrector
-            and self.service.corrector.is_loaded):
-            pp_start = time.time()
-            corrected = await loop.run_in_executor(
-                None, self.service.corrector.correct, text
-            )
-            pp_time = time.time() - pp_start
-            if corrected and corrected != text:
-                logger.info(f"[PP] \"{text[:40]}\" → \"{corrected[:40]}\" ({pp_time:.2f}s)")
-                text = corrected
-            else:
-                pp_time = 0.0
-        else:
-            pp_time = 0.0
-        
-        self.segment_id += 1
-        current_seg_id = self.segment_id
-        
-        # Collect transcript for auto-summary
-        self.all_transcripts.append(text)
-        
-        logger.info(f"[ASR] #{current_seg_id}: {text[:60]}...")
+
+        # Compute confidence from WhisperX word-level scores
         if words:
-            logger.debug(f"[Words] {len(words)} words aligned")
-        
-        # === ASYNC STREAMING: Send ASR result immediately ===
-        if self.do_translate and self.service.translator:
-            # Send intermediate result (source only, is_final=False)
+            scores = [w.get("score", 0.0) for w in words if "score" in w]
+            confidence = sum(scores) / len(scores) if scores else 0.9
+        else:
+            confidence = 0.9
+
+        # Multi-layer hallucination filter (Ricky)
+        audio_rms = float(np.sqrt(np.mean(audio ** 2)))
+        is_hallu, hallu_reason = self.hallucination_filter.is_hallucination(
+            text, audio_rms, confidence
+        )
+
+        if is_hallu:
+            logger.info(f"[Filter] Hallucination: {hallu_reason}")
+            return
+
+        logger.info(f"[ASR] {'FINAL' if is_final else 'PARTIAL'}: {text[:60]}...")
+
+        if is_final:
+            # Finalize any pending partial first
+            if self.pending_partial_text:
+                await self._finalize_pending_partial()
+
+            stable_text = text
+            self.segment_id += 1
+            self.last_stable = stable_text
+            self.agreement.reset()
+
+            # BARTpho correction (FINAL segments only, Vietnamese)
+            effective_src = detected_lang if self.src_lang == "auto" else self.src_lang
+            pp_time = 0.0
+            if (effective_src == "vi"
+                    and self.service.corrector
+                    and self.service.corrector.is_loaded):
+                pp_start = time.time()
+                corrected = await loop.run_in_executor(
+                    None, self.service.corrector.correct, stable_text
+                )
+                pp_time = time.time() - pp_start
+                if corrected and corrected != stable_text:
+                    logger.info(
+                        f"[PP] \"{stable_text[:40]}\" → \"{corrected[:40]}\" "
+                        f"({pp_time:.2f}s)"
+                    )
+                    stable_text = corrected
+
+            # Collect for summary
+            self.all_transcripts.append(stable_text)
+
+            # Update transcript history (for prompt building)
+            self.transcript_history.append(stable_text)
+            if len(self.transcript_history) > 3:
+                self.transcript_history.pop(0)
+
+            # === Async Streaming: Send ASR immediately, translate async ===
+            if self.do_translate and self.service.translator:
+                # Send intermediate (source only)
+                await self.out_queue.put(json.dumps({
+                    "type": "transcript",
+                    "segment_id": self.segment_id,
+                    "source": stable_text,
+                    "target": "",
+                    "is_final": False,
+                    "words": words,
+                    "confidence": confidence,
+                    "timestamp": self._get_timestamp(),
+                    "timing": {
+                        "asr_ms": int(asr_time * 1000),
+                        "pp_ms": int(pp_time * 1000),
+                        "mt_ms": 0,
+                    }
+                }))
+                # Fire translation async
+                asyncio.create_task(
+                    self._translate_and_send(
+                        self.segment_id, stable_text, words,
+                        asr_time, pp_time, confidence,
+                    )
+                )
+            else:
+                # No translation — send final directly
+                await self.out_queue.put(json.dumps({
+                    "type": "transcript",
+                    "segment_id": self.segment_id,
+                    "source": stable_text,
+                    "target": "",
+                    "is_final": True,
+                    "words": words,
+                    "confidence": confidence,
+                    "timestamp": self._get_timestamp(),
+                    "timing": {
+                        "asr_ms": int(asr_time * 1000),
+                        "pp_ms": int(pp_time * 1000),
+                        "mt_ms": 0,
+                    }
+                }))
+        else:
+            # PARTIAL: Apply local agreement to reduce flicker
+            stable_text, unstable_text = self.agreement.process(text)
+            display_text = f"{stable_text} {unstable_text}".strip()
+
+            self.pending_partial_text = display_text
+            self.pending_partial_time = time.time()
+
             await self.out_queue.put(json.dumps({
                 "type": "transcript",
-                "segment_id": current_seg_id,
-                "source": text,
-                "target": "",  # Translation pending
+                "segment_id": self.segment_id + 1,
+                "source": display_text,
+                "target": "",
                 "is_final": False,
                 "words": words,
+                "confidence": confidence,
+                "timestamp": self._get_timestamp(),
                 "timing": {
                     "asr_ms": int(asr_time * 1000),
-                    "pp_ms": int(pp_time * 1000),
+                    "pp_ms": 0,
                     "mt_ms": 0,
                 }
             }))
-            
-            # Fire translation async (non-blocking)
-            asyncio.create_task(
-                self._translate_and_send(current_seg_id, text, words, asr_time, pp_time)
-            )
-        else:
-            # No translation - send final result directly
-            await self.out_queue.put(json.dumps({
-                "type": "transcript",
-                "segment_id": current_seg_id,
-                "source": text,
-                "target": "",
-                "is_final": True,
-                "words": words,
-                "timing": {
-                    "asr_ms": int(asr_time * 1000),
-                    "pp_ms": int(pp_time * 1000),
-                    "mt_ms": 0,
-                }
-            }))
-    
-    async def _translate_and_send(self, segment_id: int, text: str, words: list, asr_time: float, pp_time: float):
+
+    async def _decode_intermediate(self, audio: np.ndarray):
         """
-        Async translation task - runs after ASR result is already sent.
-        Sends final update with translation when complete.
+        Intermediate partial decode for live feedback while buffering.
+        Less strict — no hallucination filter, just agreement smoothing.
         """
         loop = asyncio.get_event_loop()
-        
+
+        try:
+            prompt = self._build_prompt()
+            whisper_lang = self.src_lang if self.src_lang != "auto" else None
+
+            result = await loop.run_in_executor(
+                None,
+                lambda: self.service.asr.transcribe_segment(
+                    audio,
+                    initial_prompt=prompt,
+                    language=whisper_lang,
+                )
+            )
+
+            text = result.get("text", "").strip()
+            words = result.get("words", [])
+            if words:
+                scores = [w.get("score", 0.0) for w in words if "score" in w]
+                confidence = sum(scores) / len(scores) if scores else 0.9
+            else:
+                confidence = 0.9
+
+            if text and len(text) > 10:
+                stable_text, unstable_text = self.agreement.process(text)
+                display_text = f"{stable_text} {unstable_text}".strip()
+
+                await self.out_queue.put(json.dumps({
+                    "type": "transcript",
+                    "segment_id": self.segment_id + 1,
+                    "source": display_text,
+                    "target": "",
+                    "is_final": False,
+                    "confidence": confidence,
+                    "timestamp": self._get_timestamp(),
+                }))
+        except Exception as e:
+            logger.error(f"[Intermediate] Error: {e}")
+
+    async def _finalize_pending_partial(self):
+        """Auto-finalize pending partial text after timeout"""
+        if not self.pending_partial_text:
+            return
+
+        logger.info(f"[Partial] Auto-finalize: {self.pending_partial_text[:50]}...")
+        self.segment_id += 1
+        self.last_stable = self.pending_partial_text
+
+        await self.out_queue.put(json.dumps({
+            "type": "transcript",
+            "segment_id": self.segment_id,
+            "source": self.pending_partial_text,
+            "target": "",
+            "is_final": True,
+            "confidence": 0.8,
+            "timestamp": self._get_timestamp(),
+        }))
+
+        # Trigger translation for the finalized partial
+        if self.do_translate and self.service.translator:
+            asyncio.create_task(
+                self._translate_and_send(
+                    self.segment_id, self.pending_partial_text, [],
+                    0.0, 0.0, 0.8,
+                )
+            )
+
+        self.pending_partial_text = None
+        self.pending_partial_time = None
+        self.agreement.reset()
+
+    # ─── Translation ──────────────────────────────────────────────────
+    
+    async def _translate_and_send(
+        self, segment_id: int, text: str, words: list,
+        asr_time: float, pp_time: float, confidence: float,
+    ):
+        """Async translation — fires after ASR result is already sent to client."""
+        loop = asyncio.get_event_loop()
+
         try:
             # Resolve NLLB language codes for this session
             effective_src = getattr(self, '_detected_lang', self.src_lang)
@@ -447,7 +616,7 @@ class ASRSession:
             else:
                 nllb_src = iso_to_nllb(self.src_lang)
             nllb_tgt = iso_to_nllb(self.tgt_lang)
-            
+
             start_time = time.time()
             translation = await loop.run_in_executor(
                 None,
@@ -456,10 +625,9 @@ class ASRSession:
                 )
             )
             mt_time = time.time() - start_time
-            
+
             logger.info(f"[MT] #{segment_id} ({mt_time:.1f}s): {translation[:50]}...")
-            
-            # Send final update with translation
+
             await self.out_queue.put(json.dumps({
                 "type": "transcript",
                 "segment_id": segment_id,
@@ -467,6 +635,8 @@ class ASRSession:
                 "target": translation,
                 "is_final": True,
                 "words": words,
+                "confidence": confidence,
+                "timestamp": self._get_timestamp(),
                 "timing": {
                     "asr_ms": int(asr_time * 1000),
                     "pp_ms": int(pp_time * 1000),
@@ -475,7 +645,6 @@ class ASRSession:
             }))
         except Exception as e:
             logger.error(f"Translation error for segment {segment_id}: {e}")
-            # Send final without translation on error
             await self.out_queue.put(json.dumps({
                 "type": "transcript",
                 "segment_id": segment_id,
@@ -483,69 +652,75 @@ class ASRSession:
                 "target": "",
                 "is_final": True,
                 "words": words,
+                "confidence": confidence,
+                "timestamp": self._get_timestamp(),
                 "timing": {
                     "asr_ms": int(asr_time * 1000),
                     "pp_ms": int(pp_time * 1000),
                     "mt_ms": 0,
                 }
             }))
-    
+
+    # ─── Stop / Summarize / Cleanup ───────────────────────────────────
+
     async def _handle_stop(self):
-        """Stop recording session"""
+        """Stop recording and finalize any remaining audio"""
         if not self.is_recording:
             return
-        
+
         self.is_recording = False
-        
-        # Process remaining buffer
-        if len(self.audio_buffer) > int(MIN_SEGMENT_DURATION * SAMPLE_RATE):
-            await self._finalize_segment("stop")
-        
+
+        # Finalize any pending partial
+        if self.pending_partial_text:
+            await self._finalize_pending_partial()
+
         session_duration = time.time() - self.session_start_time
-        
-        logger.info(f"[Session] Stopped | Segments: {self.segment_id} | Duration: {session_duration:.0f}s")
-        
+
+        logger.info(
+            f"[Session] Stopped | Segments: {self.segment_id} "
+            f"| Duration: {session_duration:.0f}s"
+        )
+
         await self.out_queue.put(json.dumps({
             "type": "status",
             "status": "stopped",
             "segments": self.segment_id,
         }))
-        
-        # === Auto Summary via Groq (if session > 2 minutes) ===
-        if (session_duration >= AUTO_SUMMARY_MIN_DURATION 
-            and self.all_transcripts 
-            and self.service.groq 
-            and self.service.groq.is_available):
+
+        # Auto Summary via Groq (if session > threshold)
+        if (session_duration >= AUTO_SUMMARY_MIN_DURATION
+                and self.all_transcripts
+                and self.service.groq
+                and self.service.groq.is_available):
             await self._send_log("Generating lecture summary...", "info")
             asyncio.create_task(self._generate_summary())
-    
+
     async def _handle_summarize(self):
         """Handle manual summarize request from client"""
         if not self.all_transcripts:
             await self._send_log("No transcripts to summarize", "warning")
             return
-        
+
         if not self.service.groq or not self.service.groq.is_available:
             await self._send_log("Summary service not available", "error")
             return
-        
+
         await self._send_log("Generating summary...", "info")
         await self._generate_summary()
-    
+
     async def cleanup(self):
         """Cleanup session resources"""
         self.is_recording = False
-        self.audio_buffer = np.array([], dtype=np.float32)
         self.all_transcripts = []
-    
+
     async def _generate_summary(self):
-        """Generate lecture summary via Groq (async, non-blocking)"""
+        """Generate lecture summary via Groq"""
         try:
             full_transcript = "\n".join(self.all_transcripts)
             summary = await self.service.groq.summarize_lecture(
                 full_transcript, topic=self.topic
             )
-            
+
             if summary:
                 await self.out_queue.put(json.dumps({
                     "type": "summary",

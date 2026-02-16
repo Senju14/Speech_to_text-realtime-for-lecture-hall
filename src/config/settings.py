@@ -40,7 +40,7 @@ MIN_SEGMENT_DURATION = 0.3
 # =============================================================================
 # Local Agreement (stabilizes partial transcripts — from Ricky)
 # =============================================================================
-AGREEMENT_N = 2               # Number of consecutive agreements needed
+AGREEMENT_N = 3               # Number of consecutive agreements needed
 
 # =============================================================================
 # Hallucination Filter
@@ -50,24 +50,14 @@ HALLUCINATION_HISTORY_SIZE = 5
 # =============================================================================
 # NLLB Translation
 # =============================================================================
-# Model options (choose ONE):
-# - "facebook/nllb-200-3.3B"        : Best quality, ~13GB VRAM, ~2s/sentence
-# - "facebook/nllb-200-distilled-600M" : Fast, ~2.5GB VRAM, ~0.3s/sentence (RECOMMENDED)
-# - "facebook/nllb-200-1.3B"        : Balance, ~5GB VRAM, ~0.8s/sentence
-# Options:
-#   - "facebook/nllb-200-3.3B"           (~3.5GB VRAM, higher quality — for thesis)
-#   - "facebook/nllb-200-distilled-600M" (~2.5GB VRAM, faster — for latency-sensitive)
-NLLB_MODEL = "facebook/nllb-200-3.3B"  # Use 3.3B for thesis quality
-
-# 8-bit quantization: Reduces VRAM by ~50%, slight quality loss
-# Requires: pip install bitsandbytes
-NLLB_USE_8BIT = False  # Set True if using 3.3B model to reduce VRAM
+NLLB_MODEL = "facebook/nllb-200-1.3B" 
+NLLB_USE_8BIT = True  # 8-bit quantization for 3.3B: ~3.5GB VRAM vs ~6.6GB
 
 NLLB_SRC_LANG = "vie_Latn"
 NLLB_TGT_LANG = "eng_Latn"
 NLLB_DEVICE = "cuda"
 NLLB_MAX_LENGTH = 128  # Increased from 64 for longer sentences
-NLLB_NUM_BEAMS = 1     # Greedy decoding for speed (beam=2 is ~2x slower)
+NLLB_NUM_BEAMS = 2     # Greedy decoding for speed (beam=2 is ~2x slower)
 
 # =============================================================================
 # Audio Format

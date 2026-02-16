@@ -270,6 +270,7 @@ class WhisperXASR:
                     "word": word.get("word", ""),
                     "start": word.get("start", 0),
                     "end": word.get("end", 0),
+                    "score": word.get("score", 0.0),
                 })
         
         return {

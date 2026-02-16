@@ -52,7 +52,7 @@ image = (
         "librosa>=0.10.0",
         "huggingface_hub>=0.20.0",
     )
-    .add_local_dir("backend", remote_path="/root/backend")
+    .add_local_dir("src", remote_path="/root/src", copy=True)
 )
 
 # Dataset configurations
@@ -129,7 +129,7 @@ def run_evaluation(dataset_name: str, max_samples: int, model: str):
         login(token=hf_token)
     
     from jiwer import wer, cer
-    from backend.vad import SileroVAD
+    from src.vad import SileroVAD
     
     # Validate inputs
     if dataset_name not in DATASETS:

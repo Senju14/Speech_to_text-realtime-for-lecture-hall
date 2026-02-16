@@ -26,7 +26,7 @@ from modal import App, Image, asgi_app, Volume, enter, Secret
 
 MODAL_APP_NAME = "asr-thesis"
 MODAL_GPU = "A100" 
-MODAL_MEMORY = 24576
+MODAL_MEMORY = 40960  # 40GB — needed for WhisperX + NLLB 3.3B 8-bit + BARTpho
 MODAL_TIMEOUT = 600
 MODAL_CONTAINER_IDLE_TIMEOUT = 300
 
@@ -69,6 +69,7 @@ image = (
         "soundfile>=0.12.0",
     )
     .pip_install("safetensors>=0.4.0", "protobuf>=3.20.0")
+    .pip_install("bitsandbytes>=0.41.0")  # 8-bit quantization for NLLB 3.3B
     .pip_install("groq>=0.4.0")
     # Copy source code
     .add_local_dir("src", remote_path="/root/src", copy=True)
@@ -172,7 +173,13 @@ class ASR:
         # Initialize ASR service
         from src.session import ASRService
         self.service = ASRService()
-        asyncio.run(self.service.init())
+        
+        # Modal may already have an event loop running in @enter()
+        try:
+            loop = asyncio.get_running_loop()
+            loop.run_until_complete(self.service.init())
+        except RuntimeError:
+            asyncio.run(self.service.init())
         
         elapsed = time.time() - start
         print(f"[Container] Ready in {elapsed:.1f}s | WhisperX: {WHISPER_MODEL} | GPU: {MODAL_GPU}")

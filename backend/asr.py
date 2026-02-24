@@ -23,8 +23,7 @@ class WhisperASR:
     def load_model(self):
         if self.model is not None:
             return
-        
-        # Apply PyTorch patches for pyannote compatibility
+
         apply_torch_load_patch()
         
         import whisperx
@@ -40,8 +39,6 @@ class WhisperASR:
                 compute_type=compute_type,
                 language=self.language,
                 asr_options={"without_timestamps": True},
-                # Disable internal Pyannote VAD — already handled at streaming level
-                # (WhisperX requires vad_onset > 0, so use near-zero threshold)
                 vad_options={"vad_onset": 0.01, "vad_offset": 0.01},
             )
         
@@ -68,8 +65,6 @@ class WhisperASR:
         if normalized_audio.dtype != np.float32:
             normalized_audio = normalized_audio.astype(np.float32)
         
-        # Set initial_prompt via model options
-        # (WhisperX uses TranscriptionOptions, NOT a transcribe() kwarg)
         original_options = None
         if prompt and hasattr(self.model, 'options'):
             original_options = self.model.options
@@ -107,7 +102,6 @@ class WhisperASR:
             avg_logprob = total_prob / seg_count
             conf = min(1.0, max(0.0, 1.0 + avg_logprob / 2))
         elif text:
-            # WhisperX may not return avg_logprob — default to reasonable confidence
             conf = 0.8
         else:
             conf = 0.0
@@ -135,7 +129,6 @@ class StreamingASRProcessor:
         if len(self.audio_buffer) < SAMPLE_RATE:
             return "", 0.0
         
-        # Whisper will normalize internally
         text, conf = self.asr.transcribe(self.audio_buffer, prompt)
         return text, conf
 
@@ -144,7 +137,6 @@ class StreamingASRProcessor:
             self.audio_buffer = np.array([], dtype=np.float32)
             return "", 0.0
         
-        # Whisper will normalize internally
         text, conf = self.asr.transcribe(self.audio_buffer, prompt)
         
         if text:

@@ -41,11 +41,9 @@ def apply_torch_load_patch():
     
     import torch
     
-    # 1. Enable TF32 for ~3x faster matmul on Ampere+ GPUs
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
     
-    # 2. Patch torch.load for pyannote compatibility (PyTorch 2.6+)
     _original_load = torch.load
     
     def _patched_load(*args, **kwargs):
@@ -54,7 +52,6 @@ def apply_torch_load_patch():
     
     torch.load = _patched_load
     
-    # 3. Filter known noisy warnings
     warnings.filterwarnings("ignore", message=".*Model was trained with pyannote.*")
     warnings.filterwarnings("ignore", message=".*Model was trained with torch.*")
     warnings.filterwarnings("ignore", message=".*Some weights of.*were not initialized.*")
@@ -70,7 +67,6 @@ def apply_torch_load_patch():
     warnings.filterwarnings("ignore", message=".*Lightning automatically upgraded.*")
     warnings.filterwarnings("ignore", message=".*lightning.*upgraded.*")
     
-    # 4. Suppress noisy logging from dependencies
     for logger_name in [
         "transformers.modeling_utils",
         "transformers.utils.hub",

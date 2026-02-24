@@ -137,10 +137,16 @@ modal deploy main.py
 
 ```
 .
+├── .gitignore                       # Git ignore rules
+├── .python-version                  # Python version specification
 ├── main.py                          # Modal entry point & ASGI app
 ├── requirements.txt                 # Python dependencies
+├── pyproject.toml                   # Project metadata
 ├── env.example                      # Environment variables template
+├── compare_systems.py               # System comparison benchmark
+├── compare_systems_2.py             # Extended system comparison
 ├── backend/
+│   ├── __init__.py                  # Package init
 │   ├── config.py                    # All configuration parameters
 │   ├── handler.py                   # WebSocket session management
 │   ├── asr.py                       # WhisperX / Faster-Whisper ASR
@@ -168,6 +174,7 @@ modal deploy main.py
 │       ├── recordings.js            # Recording playback
 │       ├── export.js                # Transcript export
 │       └── utils.js                 # Shared utilities
+└── venv/                            # Python virtual environment
 ```
 
 ---

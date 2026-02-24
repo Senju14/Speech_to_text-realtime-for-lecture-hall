@@ -26,13 +26,6 @@ class HallucinationFilter:
             "subscribe", "đăng ký kênh", "like and subscribe",
             "ghiền mì gõ", "la la school",
             
-            # Vietnamese hallucination patterns (uncomment to activate)
-            # "hẹn gặp lại các bạn",
-            # "video tiếp theo",
-            # "video kế tiếp",
-            # "cảm ơn các bạn đã theo dõi",
-            # "xin chào các bạn",
-            
             # Whisper timestamp artifacts
             "[", "]", ">>", "<<",
             

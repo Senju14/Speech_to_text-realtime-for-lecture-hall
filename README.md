@@ -143,8 +143,6 @@ modal deploy main.py
 ├── requirements.txt                 # Python dependencies
 ├── pyproject.toml                   # Project metadata
 ├── env.example                      # Environment variables template
-├── compare_systems.py               # System comparison benchmark
-├── compare_systems_2.py             # Extended system comparison
 ├── backend/
 │   ├── __init__.py                  # Package init
 │   ├── config.py                    # All configuration parameters

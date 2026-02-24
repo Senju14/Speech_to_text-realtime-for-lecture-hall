@@ -24,7 +24,6 @@ class WhisperAudioNormalizer:
         nyq = 0.5 * self.sample_rate
         normal_cutoff = cutoff / nyq
         
-        # Protect against invalid cutoff
         if normal_cutoff >= 1.0:
             logger.warning(f"[HPF] Cutoff {cutoff}Hz too high for {self.sample_rate}Hz, skipping")
             return audio

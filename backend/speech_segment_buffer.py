@@ -13,11 +13,9 @@ class SpeechSegmentBuffer:
         self.max_sec = max_sec
         self.overlap_sec = overlap_sec
         self.silence_limit = silence_limit
-        
         self.reset()
     
     def reset(self):
-        """Reset buffer state (call at session start)"""
         self.in_speech = False
         self.segment = [] 
         self.overlap = np.zeros(0, dtype=np.float32)  
@@ -41,7 +39,7 @@ class SpeechSegmentBuffer:
                 chunk = np.concatenate(self.segment)
                 self._update_overlap(chunk)
                 self.segment = []
-                self.in_speech = False  # Reset để segment tiếp theo dùng overlap
+                self.in_speech = False
                 return 'final', chunk
             
             return None
@@ -69,7 +67,6 @@ class SpeechSegmentBuffer:
             self._update_overlap(chunk)
             self.segment = []
             self.in_speech = False  
-            # return "partial", chunk
             return 'final', chunk
         
         return None

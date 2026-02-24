@@ -8,6 +8,16 @@ logger = logging.getLogger(__name__)
 
 
 class VADManager:
+    """Pyannote neural VAD for streaming speech detection.
+    
+    Loads the bundled Pyannote model from whisperx/assets/pytorch_model.bin
+    to avoid HuggingFace token requirement.
+    
+    Interface:
+        is_speech(audio) → bool
+        load(), reset(), get_stats()
+    """
+    
     def __init__(self, device: str = "cuda", threshold: float = 0.5):
         self.device = device
         self.threshold = threshold
@@ -88,8 +98,6 @@ class VADManager:
         with torch.no_grad():
             output = self.model(waveform)
         
-        # output shape: (1, num_frames, num_speakers)
-        # Model outputs logits → apply sigmoid for probabilities
         probs = torch.sigmoid(output)
         
         # Use the last few frames (corresponding to the new chunk)
@@ -98,7 +106,6 @@ class VADManager:
         last_n = max(1, int(num_frames * chunk_ratio))
         recent_probs = probs[0, -last_n:, :]
         
-        # Speech = any speaker channel active → max across speakers, mean across frames
         speech_prob = recent_probs.max(dim=-1).values.mean().item()
         self._last_prob = speech_prob
         

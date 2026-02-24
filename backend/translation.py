@@ -59,7 +59,6 @@ class NLLBTranslator:
                 max_length=512
             )
             
-            # Move inputs to same device as model
             device = next(self.model.parameters()).device
             inputs = {k: v.to(device) for k, v in inputs.items()}
             

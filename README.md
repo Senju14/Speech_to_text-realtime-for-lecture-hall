@@ -168,13 +168,6 @@ modal deploy main.py
 │       ├── recordings.js            # Recording playback
 │       ├── export.js                # Transcript export
 │       └── utils.js                 # Shared utilities
-├── test/
-│   ├── README.md                    # Evaluation documentation
-│   ├── bench_table1.py              # Table 1: Streaming ASR trade-off
-│   ├── bench_table2.py              # Table 2: MT configuration comparison
-│   ├── bench_table3.py              # Table 3: End-to-end latency breakdown
-│   └── bench_table4.py              # Table 4: VAD ablation study
-└── tables.txt                       # Latest benchmark results summary
 ```
 
 ---

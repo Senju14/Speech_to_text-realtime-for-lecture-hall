@@ -120,7 +120,9 @@ cd Speech_to_text-realtime-for-lecture-hall
 pip install modal
 modal token new
 
-# 3. (Optional) Set Groq API key for LLM features
+# 3. (Optional) Configure environment variables
+cp env.example .env
+# Edit .env and add your Groq API key (see https://console.groq.com/keys)
 modal secret create groq-api-key GROQ_API_KEY=gsk_xxxxx
 
 # 4. Deploy to Modal
@@ -137,6 +139,7 @@ modal deploy main.py
 .
 ├── main.py                          # Modal entry point & ASGI app
 ├── requirements.txt                 # Python dependencies
+├── env.example                      # Environment variables template
 ├── backend/
 │   ├── config.py                    # All configuration parameters
 │   ├── handler.py                   # WebSocket session management
@@ -165,10 +168,13 @@ modal deploy main.py
 │       ├── recordings.js            # Recording playback
 │       ├── export.js                # Transcript export
 │       └── utils.js                 # Shared utilities
-└── test/
-    ├── README.md                    # Evaluation documentation
-    ├── streaming_eval.py            # Benchmark evaluation script
-    └── generate_tables.py           # Results table generator
+├── test/
+│   ├── README.md                    # Evaluation documentation
+│   ├── bench_table1.py              # Table 1: Streaming ASR trade-off
+│   ├── bench_table2.py              # Table 2: MT configuration comparison
+│   ├── bench_table3.py              # Table 3: End-to-end latency breakdown
+│   └── bench_table4.py              # Table 4: VAD ablation study
+└── tables.txt                       # Latest benchmark results summary
 ```
 
 ---
@@ -206,22 +212,80 @@ NLLB_TGT_LANG = "eng_Latn"             # English
 
 ## 📊 Evaluation Results
 
-Streaming ASR benchmark on **100 samples per dataset**, evaluated on VLSP2020 (Vietnamese) and Earnings22 (English):
+All benchmarks run on **NVIDIA A100 40GB** with **N = 600 samples** from [Google FLEURS](https://huggingface.co/datasets/google/fleurs) test split.
 
-| Model | Dataset | GPU | WER ↓ | CER ↓ | TTFT | RTF |
-|:------|:--------|:---:|------:|------:|-----:|----:|
-| Whisper large-v3 | VLSP2020 | A100 | 26.94% | 22.19% | 4 ms | 0.070x |
-| Whisper large-v3 | Earnings22 | A100 | 25.44% | 19.65% | 1 ms | 0.060x |
-| **PhoWhisper** | **VLSP2020** | **A100** | **16.16%** | **14.82%** | 4 ms | 0.081x |
-| PhoWhisper | Earnings22 | A100 | 29.59% | 21.80% | 2 ms | 0.088x |
+### Table 1 — Streaming ASR Trade-off (Update Frequency × Compute)
+
+Sweeping 5 chunk sizes across Vi → En and En → Vi translation directions:
+
+| Translation | Min Chunk | WER (%) ↓ | BLEU ↑ | Latency (s) | RTF | N |
+|:------------|:----------|----------:|-------:|:------------|:----|----:|
+| En → Vi | 0.5 s | 4.91 | 0 | 0.213 ± 0.039 | 0.435 ± 0.077 | 600 |
+| En → Vi | 1.0 s | 4.91 | 0 | 0.219 ± 0.041 | 0.230 ± 0.041 | 600 |
+| En → Vi | 2.0 s | 4.91 | 0 | 0.226 ± 0.036 | 0.125 ± 0.019 | 600 |
+| En → Vi | 3.0 s | 4.91 | 0 | 0.235 ± 0.040 | 0.088 ± 0.016 | 600 |
+| En → Vi | 5.0 s | 4.91 | 0 | 0.259 ± 0.044 | 0.069 ± 0.012 | 600 |
+| Vi → En | 0.5 s | 8.13 | 0.2 | 0.325 ± 0.064 | 0.665 ± 0.126 | 600 |
+| Vi → En | 1.0 s | 8.13 | 0.2 | 0.331 ± 0.058 | 0.348 ± 0.055 | 600 |
+| Vi → En | 2.0 s | 8.13 | 0.2 | 0.339 ± 0.056 | 0.187 ± 0.028 | 600 |
+| Vi → En | 3.0 s | 8.13 | 0.2 | 0.351 ± 0.064 | 0.133 ± 0.023 | 600 |
+| Vi → En | 5.0 s | 8.13 | 0.2 | 0.388 ± 0.062 | 0.098 ± 0.013 | 600 |
+
+> WER is constant per direction (full-audio transcription); latency & RTF vary with chunk size.
+
+---
+
+### Table 2 — Computationally Aware MT Configuration
+
+Comparing 4 MT configurations with fixed ASR (Whisper large-v3, full sentence, VAD on):
+
+| Mode | Configuration | avg. BLEU ↑ | Latency (s) | avg. RTF | Throughput (tok/s) | Peak VRAM (GB) |
+|:-----|:--------------|------------:|:------------|:---------|:-------------------|---------------:|
+| Unaware | NLLB fp16, beam = 5 | 0.2 | 0.776 ± 0.261 | 0.061 | 41 ± 3 | 11.1 |
+| Unaware | NLLB fp16, beam = 1 | 0.2 | 0.611 ± 0.203 | 0.048 | 52 ± 2 | 11.1 |
+| Aware | Dynamic Beam (queue > 5) | 0.2 | 0.617 ± 0.209 | 0.048 | 51 ± 4 | 11.1 |
+| **Aware + Quantized** | **Dynamic Beam + int8** | **0.2** | **0.603 ± 0.205** | **0.047** | **53 ± 4** | **11.1** |
+
+> Dynamic Beam reduces beam 5 → 1 when translation queue > 5, saving compute without BLEU loss.
+
+---
+
+### Table 3 — End-to-End Latency Breakdown (1 chunk, 3s audio)
+
+Profiling each pipeline stage on a single 3-second Vietnamese audio chunk:
+
+| Pipeline Stage | Platform | Time (ms) | Percentage (%) | Bottleneck |
+|:-------------------------------|:---------|:---------:|:--------------:|:-------------------|
+| Client → Modal (upload) | Network | 80 | 13.2 | I/O |
+| Pyannote VAD | GPU | 4 ± 0.3 | 0.7 | — |
+| Whisper large-v3 | GPU | 167 ± 16.3 | 27.6 | GPU Compute |
+| BARTpho syllable correction | GPU | 173 ± 2.5 | 28.6 | GPU Compute |
+| NLLB-3.3B (beam = 3) | GPU | 148 ± 137.3 | 24.5 | GPU Compute |
+| Modal → Client (download) | Network | 32 | 5.3 | I/O |
+| **Total (End-to-End)** | **—** | **604** | **100.0** | **RTF ≈ 0.20** |
+
+> GPU compute (Whisper + BARTpho + NLLB) accounts for **80.7%** of total latency. VAD overhead is negligible (0.7%).
+
+---
+
+### Table 4 — VAD Ablation Study (Incremental Pipeline)
+
+Incremental component evaluation on silence-padded FLEURS Vietnamese (chunk = 2.0s):
+
+| Pipeline | WER (%) ↓ | Halluc. Filtered | Silence→ASR | ASR Calls | GPU Time (s) | GPU/sample (s) | GPU Saved (%) | N |
+|:--------------------------|----------:|-----------------:|------------:|----------:|-------------:|-----------------:|----------------:|----:|
+| Whisper only | 48.97 | 0 | 2,719 | 2,106 | 534.03 | 0.890 | 0 | 600 |
+| + Pyannote VAD | **33.70** | 0 | 1,260 | 1,653 | 449.09 | 0.749 | **15.9** | 600 |
+| + VAD + Halluc. Filter | 57.41 | 776 | 1,260 | 1,653 | 451.16 | 0.752 | 15.5 | 600 |
+| Full Pipeline (+ BARTpho) | 58.57 | 776 | 1,260 | 1,653 | 804.02 | 1.340 | -50.6 | 600 |
 
 **Key findings:**
-- 🏆 PhoWhisper achieves **16.16% WER** on Vietnamese — **40% improvement** over Whisper
-- Whisper outperforms on English (Earnings22) as expected
-- RTF 0.06–0.09x → **11–17× faster than real-time**
-- TTFT < 5 ms for all configurations
+- 🏆 Pyannote VAD reduces WER from **48.97% → 33.70%** (−31%) and saves **15.9% GPU time**
+- VAD eliminates **1,459 silence-to-ASR leaks** (2,719 → 1,260), reducing unnecessary ASR calls by **21.5%**
+- Hallucination filter catches **776 hallucinated segments** but increases WER (filters out some valid text)
+- BARTpho adds significant GPU overhead (+78.9%) — best suited for final output correction
 
-> 📖 See [`test/README.md`](test/README.md) for evaluation scripts and detailed methodology.
+> 📖 Run benchmarks: `modal run test/bench_table[1-4].py --samples 600`
 
 ---
 

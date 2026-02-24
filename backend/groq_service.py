@@ -2,15 +2,12 @@ import os
 import logging
 import asyncio
 from typing import Optional
-
 from backend.config import GROQ_API_KEY, GROQ_MODEL, GROQ_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
 
-class GroqService:
-    """Groq API client for LLM features"""
-    
+class GroqService: 
     def __init__(self, api_key: Optional[str] = None, model: str = GROQ_MODEL):
         self.api_key = api_key or GROQ_API_KEY
         self.model = model
@@ -18,7 +15,6 @@ class GroqService:
         self.is_available = False
         
     def init(self):
-        """Initialize Groq client"""
         if not self.api_key:
             logger.warning("[Groq] No API key configured - LLM features disabled")
             return
@@ -87,7 +83,7 @@ Return ONLY the keywords as a comma-separated list. No explanations."""
         topic_context = f'Topic: "{topic}"\n' if topic else ""
         
         # Truncate very long transcripts to fit context window
-        max_chars = 25000  # ~6k tokens, leave room for prompt + output
+        max_chars = 25000  
         if len(transcript) > max_chars:
             transcript = transcript[:max_chars] + "\n... (truncated)"
         

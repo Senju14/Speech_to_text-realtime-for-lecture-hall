@@ -24,7 +24,6 @@ from backend.hallucination_filter import HallucinationFilter
 
 class ASRService:
     """Service manages shared models across sessions"""
-    
     def __init__(self):
         self.asr = None
         self.translator = None
@@ -68,7 +67,6 @@ class ASRService:
         )
         await loop.run_in_executor(None, self.translator.load_model)
         
-        # Init Groq LLM (non-blocking, no model to load)
         print("[Model] Initializing Groq LLM...")
         self.groq = GroqService()
         self.groq.init()
@@ -85,10 +83,8 @@ class ASRSession:
     def __init__(self, service: ASRService):
         self.service = service
         self.out_queue = asyncio.Queue()
-        
-        # Core components
         self.vad = VADManager(device="cuda")
-        self.vad.load()  # Pyannote model loaded eagerly
+        self.vad.load() 
         self.segmenter = SpeechSegmentBuffer(
             sample_rate=SAMPLE_RATE,
             max_sec=MAX_SEGMENT_SEC,
@@ -231,8 +227,7 @@ class ASRSession:
         
         rms = np.sqrt(np.mean(audio ** 2))
         
-        # For very quiet audio, skip VAD inference but still tell segmenter
-        # it's silence — this allows silence_limit to trigger FINAL
+
         if rms < 0.003:
             is_speech = False
         else:
@@ -341,7 +336,6 @@ class ASRSession:
             self.pending_partial_text = f"{stable_text} {unstable_text}".strip()
             self.pending_partial_time = time.time()
 
-        # Combine for display
         display_text = f"{stable_text} {unstable_text}".strip()
         
         await self.out_queue.put(json.dumps({

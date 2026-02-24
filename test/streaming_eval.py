@@ -84,8 +84,8 @@ MODELS = {
 
 # Streaming simulation parameters
 # Buffer size of 30s is optimal per Whisper paper (trained on 30s segments)
-MAX_BUFFER_DURATION = 30.0  # seconds - accumulate audio until this duration
-MIN_SILENCE_DURATION = 0.5   # seconds - minimum silence to trigger transcription
+MAX_BUFFER_DURATION = 30.0  
+MIN_SILENCE_DURATION = 0.5   
 
 
 def normalize_text(text: str) -> str:
@@ -123,7 +123,6 @@ def run_evaluation(dataset_name: str, max_samples: int, model: str):
     from faster_whisper import WhisperModel
     import os
     
-    # Authenticate with HuggingFace for private datasets
     hf_token = os.environ.get("HF_TOKEN")
     if hf_token:
         login(token=hf_token)
@@ -151,7 +150,6 @@ def run_evaluation(dataset_name: str, max_samples: int, model: str):
     print(f"Samples: {max_samples}")
     print(f"Buffer: {MAX_BUFFER_DURATION}s")
     
-    # Step 1: Load ASR model
     print("\n[1/3] Loading ASR model...")
     asr_model = WhisperModel(
         model_path,
@@ -161,7 +159,6 @@ def run_evaluation(dataset_name: str, max_samples: int, model: str):
     vad = EnergyVAD(threshold=VAD_THRESHOLD)
     print("  Done")
     
-    # Step 2: Load dataset samples
     print("\n[2/3] Loading dataset...")
     samples = load_dataset_samples(config, max_samples)
     print(f"  Loaded {len(samples)} samples")
@@ -169,7 +166,6 @@ def run_evaluation(dataset_name: str, max_samples: int, model: str):
     if not samples:
         return {"error": "No samples loaded", "dataset": dataset_name}
     
-    # Step 3: Run streaming simulation
     print("\n[3/3] Running streaming simulation...")
     results = run_streaming_simulation(samples, asr_model, vad, config["language"])
     
@@ -206,7 +202,6 @@ def run_evaluation(dataset_name: str, max_samples: int, model: str):
 
 
 # GPU-specific Modal functions
-# These are separate functions to allow Modal to allocate the correct GPU type
 
 @app.function(gpu="A100", timeout=3600, image=image, secrets=[modal.Secret.from_name("huggingface-secret")])
 def evaluate_a100(dataset_name: str, max_samples: int = 100, model: str = "whisper"):
@@ -221,12 +216,6 @@ def evaluate_h100(dataset_name: str, max_samples: int = 100, model: str = "whisp
 
 
 def load_dataset_samples(config: dict, max_samples: int):
-    """
-    Load audio samples from HuggingFace dataset.
-    
-    Uses streaming mode to avoid downloading entire dataset.
-    Resamples audio to 16kHz if needed.
-    """
     from datasets import load_dataset
     import numpy as np
     import librosa
@@ -238,10 +227,8 @@ def load_dataset_samples(config: dict, max_samples: int):
     if config.get("config"):
         load_kwargs["name"] = config["config"]
     
-    # Load dataset in streaming mode
     ds = load_dataset(config["hf_name"], **load_kwargs)
     
-    # Fetch items
     items = []
     for i, item in enumerate(ds):
         if i >= max_samples:
@@ -294,7 +281,6 @@ def decode_audio(audio_data):
     audio = None
     sr = 16000
     
-    # Format 1: AudioDecoder from torchcodec
     if hasattr(audio_data, 'get_all_samples'):
         samples_obj = audio_data.get_all_samples()
         if hasattr(samples_obj, 'data'):
@@ -305,7 +291,6 @@ def decode_audio(audio_data):
                 audio = np.asarray(data, dtype=np.float32).flatten()
             sr = getattr(samples_obj, 'sample_rate', 16000)
     
-    # Format 2: Dictionary format
     elif isinstance(audio_data, dict):
         if "array" in audio_data:
             arr = audio_data["array"]
@@ -320,7 +305,6 @@ def decode_audio(audio_data):
             audio, sr = sf.read(io.BytesIO(audio_data["bytes"]))
             audio = audio.astype(np.float32).flatten()
     
-    # Format 3: Tensor-like
     elif hasattr(audio_data, 'numpy'):
         audio = audio_data.numpy().flatten().astype(np.float32)
     
@@ -339,7 +323,7 @@ def run_streaming_simulation(samples, asr_model, vad, language):
     import time
     import numpy as np
     
-    chunk_samples = int(16000 * 100 / 1000)  # 100ms = 1600 samples at 16kHz
+    chunk_samples = int(16000 * 100 / 1000)  
     
     results = {
         "references": [],
@@ -396,11 +380,11 @@ def simulate_session(audio, asr_model, vad, language, chunk_samples):
     audio_buffer = np.array([], dtype=np.float32)
     audio_duration = len(audio) / 16000
     num_chunks = max(1, len(audio) // chunk_samples)
-    chunk_duration = chunk_samples / 16000  # 0.1 seconds
+    chunk_duration = chunk_samples / 16000  
     
     session_start = time.time()
     first_emission_time = None
-    emissions = []  # List of (wall_clock_time, simulated_audio_time)
+    emissions = []  
     silence_counter = 0.0
     simulated_time = 0.0
     final_text = ""

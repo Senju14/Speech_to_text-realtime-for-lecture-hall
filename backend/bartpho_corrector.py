@@ -1,7 +1,6 @@
 import re
 import logging
 from typing import Optional, List, Tuple
-
 import torch
 
 logger = logging.getLogger(__name__)
@@ -9,10 +8,8 @@ logger = logging.getLogger(__name__)
 BARTPHO_ADAPTER = "522H0134-NguyenNhatHuy/bartpho-syllable-correction"
 BARTPHO_BASE = "vinai/bartpho-syllable"
 
-# ============================================================
-# English Detection — Three Layers
-# ============================================================
 
+# English Detection — Three Layers
 # Layer 1: Vietnamese diacritics → always Vietnamese
 _VIET_CHARS = set(
     "àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợ"
@@ -24,7 +21,6 @@ _VIET_CHARS = set(
 _ASCII_WORD = re.compile(r'^[A-Za-z0-9]+$')
 _PUNCT = re.compile(r'^[^\w\s]+|[^\w\s]+$')
 
-# Layer 1b: Known abbreviations
 _COMMON_EN_ABBREV = {
     "AI", "ML", "NLP", "GPU", "CPU", "API", "LLM", "CNN", "RNN", "GAN",
     "IoT", "SQL", "LSTM", "BERT", "GPT", "RAM", "SSD", "HDD",
@@ -129,11 +125,6 @@ def split_en_vi(text: str) -> List[Tuple[str, bool]]:
       1. Per-word rules (diacritics, caps, abbreviations, word list)
       2. Consecutive ASCII-only words (2+) → all treated as English
       3. Group into contiguous chunks
-
-    Example:
-        "machine learning các bạn có biết deep learning không"
-        → [("machine learning", True), ("các bạn có biết", False),
-           ("deep learning", True), ("không", False)]
     """
     words = text.split()
     if not words:
@@ -182,13 +173,8 @@ def split_en_vi(text: str) -> List[Tuple[str, bool]]:
     return chunks
 
 
-# ============================================================
 # BARTpho Corrector
-# ============================================================
-
 class BARTphoCorrector:
-    """Vietnamese syllable-level error correction using BARTpho + LoRA"""
-
     def __init__(
         self,
         adapter_id: str = BARTPHO_ADAPTER,
@@ -204,7 +190,6 @@ class BARTphoCorrector:
         self.is_loaded = False
 
     def load_model(self):
-        """Load BARTpho base + LoRA adapter"""
         if self.is_loaded:
             return
 
@@ -257,7 +242,7 @@ class BARTphoCorrector:
 
         corrected = self.tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
 
-        # ---- Length safety check ----
+        # Length safety check 
         in_words = len(text.split())
         out_words = len(corrected.split()) if corrected else 0
 
@@ -272,6 +257,19 @@ class BARTphoCorrector:
         return corrected
 
     def correct(self, text: str, max_length: int = 256) -> str:
+        """
+        Correct Vietnamese ASR transcription errors (English-Aware v2).
+
+        Flow: Split(EN/VI) → Correct(VI only) → Merge
+        Safety: Rejects corrections that drop too many words.
+
+        Args:
+            text: Raw ASR output (mixed Vietnamese + English)
+            max_length: Max output token length
+
+        Returns:
+            Corrected text with English parts preserved
+        """
         if not text or not text.strip():
             return ""
 

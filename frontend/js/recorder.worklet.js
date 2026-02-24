@@ -19,7 +19,6 @@ class RecorderWorklet extends AudioWorkletProcessor {
         if (input && input.length > 0) {
             const channelData = input[0];
 
-            // Calculate RMS for UI meter only
             const rms = this.calculateRMS(channelData);
 
             this.port.postMessage({

@@ -1,5 +1,5 @@
 <p align="center">
-  <h1 align="center">Speech to Text Realtime for Lecture Hall</h1>
+  <h1 align="center">Developing a real-time bilingual speech-to-text conversion system</h1>
   <p align="center">
     <strong>Real-time Vietnamese → English Neural Speech Translation</strong>
     <br>
@@ -18,7 +18,7 @@
 
 ## ⚡ Overview
 
-**Speech to Text Realtime for Lecture Hall** is a high-performance, real-time speech translation system specifically optimized for Vietnamese lectures. It transforms live audio into dual-language transcripts with under **600ms** end-to-end latency.
+**Developing a real-time bilingual speech-to-text conversion system** is a high-performance, real-time speech translation system specifically optimized for Vietnamese lectures. It transforms live audio into dual-language transcripts with under **600ms** end-to-end latency.
 
 Built on top of **WhisperX**, **BARTpho**, and **NLLB-200**, it solves typical real-time ASR pain points: hallucinations, terminology corruption, and display flickering.
 

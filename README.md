@@ -1,5 +1,5 @@
 <p align="center">
-  <h1 align="center">Developing a real-time bilingual speech-to-text conversion system</h1>
+  <h1 align="center">DEVELOPING A REAL-TIME BILINGUAL SPEECH-TO-TEXT CONVERSION SYSTEM</h1>
   <p align="center">
     <strong>Real-time Vietnamese → English Neural Speech Translation</strong>
     <br>

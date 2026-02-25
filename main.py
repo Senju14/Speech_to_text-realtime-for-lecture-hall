@@ -120,10 +120,7 @@ class ASR:
             description="Real-time Vietnamese ASR with segment-based architecture"
         )
         
-        # ============================
         # Middleware
-        # ============================
-        
         class NoCacheMiddleware(BaseHTTPMiddleware):
             """Prevent browser caching of frontend assets"""
             async def dispatch(self, request, call_next):
@@ -143,16 +140,11 @@ class ASR:
             allow_headers=["*"],
         )
 
-        # ============================
         # Server state
-        # ============================
-        
         start_time = time.time()
         conn_count = [0]  
 
-        # ============================
         # REST API Endpoints
-        # ============================
         
         @web_app.get("/api/status")
         async def status():
@@ -193,9 +185,7 @@ class ASR:
             except Exception as e:
                 return JSONResponse({"error": str(e)}, status_code=500)
 
-        # ============================
         # WebSocket Endpoint
-        # ============================
         
         @web_app.websocket("/ws/transcribe")
         async def websocket_endpoint(websocket: WebSocket):
@@ -253,10 +243,7 @@ class ASR:
             finally:
                 print(f"[WS #{cid}] ✗ Closed")
 
-        # ============================
         # Static Files (Frontend)
-        # ============================
-        
         web_app.mount(
             "/", 
             StaticFiles(directory="/root/frontend", html=True), 

@@ -26,7 +26,7 @@
 | 🧠 **Neural VAD** | Pyannote segmentation model for accurate speech/silence detection |
 | ✍️ **Post-processing** | BARTpho syllable-level correction with English-aware preservation |
 | 🌐 **Translation** | NLLB-200 3.3B for high-quality Vietnamese → English translation |
-| 🤖 **LLM Context** | Groq (LLaMA 3.1) for keyword expansion and lecture summarization |
+| 🤖 **LLM Context** | LLaMA 3.1 for keyword expansion and lecture summarization |
 | 🔁 **Local Agreement** | Multi-pass decoding consensus for stable partial transcriptions |
 | 🛡️ **Hallucination Filter** | Pattern matching + WPS + confidence thresholding |
 | ⚡ **Serverless GPU** | Modal cloud deployment with A100 GPU and auto-scaling |

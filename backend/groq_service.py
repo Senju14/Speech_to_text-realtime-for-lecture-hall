@@ -9,7 +9,8 @@ logger = logging.getLogger(__name__)
 
 class GroqService: 
     def __init__(self, api_key: Optional[str] = None, model: str = GROQ_MODEL):
-        self.api_key = api_key or GROQ_API_KEY
+        # Read from os.environ at runtime (Modal injects secrets after import)
+        self.api_key = api_key or os.environ.get("GROQ_API_KEY", "") or GROQ_API_KEY
         self.model = model
         self.client = None
         self.is_available = False

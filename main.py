@@ -18,40 +18,47 @@ app = App(MODAL_APP_NAME)
 image = (
     Image.debian_slim(python_version="3.11")
     .apt_install("git", "ffmpeg", "libsndfile1")
-    # PyTorch with CUDA support
     .pip_install(
         "torch>=2.0.0",
         "torchaudio>=2.0.0",
         extra_options="--index-url https://download.pytorch.org/whl/cu124"
     )
-    # Transformers ecosystem
     .pip_install(
+        "ctranslate2>=4.5.0",
+        "whisperx",
+        "lightning",
+        "python-dotenv",
         "transformers>=4.35.0",
         "accelerate>=0.25.0",
         "sentencepiece>=0.1.99",
-    )
-    # WhisperX (includes faster-whisper + pyannote VAD)
-    .pip_install("whisperx")
-    # Web server
-    .pip_install(
+        "safetensors>=0.4.0",
+        "protobuf>=3.20.0",
+        "peft>=0.7.0",
+        "groq>=0.4.0",
         "fastapi>=0.104.0",
         "uvicorn>=0.24.0",
         "websockets>=12.0",
         "aiofiles>=23.0.0",
-    )
-    # Scientific computing
-    .pip_install(
         "numpy>=1.24.0",
         "scipy>=1.11.0",
         "soundfile>=0.12.0",
     )
-    # Utilities
-    .pip_install("safetensors>=0.4.0", "protobuf>=3.20.0")
-    # Post-processing (BARTpho syllable correction)
-    .pip_install("peft>=0.7.0")
-    # LLM (Groq API for context priming + summary)
-    .pip_install("groq>=0.4.0")
-    # Add project files
+    .env({
+        "LD_LIBRARY_PATH": "/usr/local/lib/python3.11/site-packages/nvidia/cudnn/lib:"
+                           "/usr/local/lib/python3.11/site-packages/nvidia/cublas/lib:"
+                           "/usr/local/lib/python3.11/site-packages/nvidia/cuda_runtime/lib",
+    })
+    .run_commands(
+        "pip uninstall -y torchcodec 2>/dev/null || true",
+        "python -c \""
+        "import torch, sys; "
+        "orig_load = torch.load; "
+        "torch.load = lambda *a, **k: orig_load(*a, **{**k, 'weights_only': False}); "
+        "sys.argv = ['upgrade', '--map-to-cpu', '/usr/local/lib/python3.11/site-packages/whisperx/assets/pytorch_model.bin']; "
+        "from lightning.pytorch.utilities.upgrade_checkpoint import main; "
+        "main()"
+        "\"",
+    )
     .add_local_dir("backend", remote_path="/root/backend")
     .add_local_dir("frontend", remote_path="/root/frontend")
 )
@@ -66,7 +73,7 @@ cache = Volume.from_name("asr-model-cache", create_if_missing=True)
     scaledown_window=MODAL_CONTAINER_IDLE_TIMEOUT,
     image=image,
     volumes={"/cache": cache},
-    secrets=[Secret.from_name("groq-api-key")],
+    secrets=[Secret.from_dotenv()],
 )
 class ASR:
     @enter()
@@ -82,6 +89,16 @@ class ASR:
         
         sys.path.append("/root")
         os.environ["HF_HOME"] = "/cache/huggingface"
+        
+        # Propagate HF_TOKEN for HuggingFace model downloads
+        hf_token = os.environ.get("HF_TOKEN", "")
+        if hf_token:
+            os.environ["HUGGING_FACE_HUB_TOKEN"] = hf_token
+        
+        # Debug: verify secrets are injected
+        has_groq = bool(os.environ.get("GROQ_API_KEY"))
+        has_hf = bool(hf_token)
+        print(f"[Container] Secrets: GROQ_API_KEY={'✓' if has_groq else '✗'} | HF_TOKEN={'✓' if has_hf else '✗'}")
         
         # Apply PyTorch patches for WhisperX/pyannote compatibility
         from backend.torch_patch import apply_torch_load_patch

@@ -23,6 +23,7 @@
 Built on top of **WhisperX**, **BARTpho**, and **NLLB-200**, it solves typical real-time ASR pain points: hallucinations, terminology corruption, and display flickering.
 
 ---
+
 <p align="center">
   <img src="images/image-1.png" alt="ASR System Banner" width="800">
 </p>
@@ -41,7 +42,7 @@ The system utilizes a serverless GPU architecture on **Modal**, allowing for ela
 
 - 🚀 **Sub-second Latency**: Processing optimized for real-time streaming using segment-based buffering.
 - 🎯 **Domain-Aware**: Groq-powered context priming expanding lecture topics into ASR keywords.
-- 🛠️ **Smart Correction**: "English-Aware" BARTpho post-processing that fixes Vietnamese spelling while protecting technical terms like *API, Neural Network, Docker*.
+- 🛠️ **Smart Correction**: "English-Aware" BARTpho post-processing that fixes Vietnamese spelling while protecting technical terms like _API, Neural Network, Docker_.
 - 🖼️ **Stable UI**: Local Agreement algorithm prevents "flickering" in partial transcriptions.
 - 🌊 **Seamless VAD**: Pyannote neural segmenter ensures high accuracy even in noisy environments.
 - 📝 **Auto-Summarization**: Generating markdown summaries of entire sessions automatically.
@@ -50,45 +51,55 @@ The system utilizes a serverless GPU architecture on **Modal**, allowing for ela
 
 ## 🛠️ Technology Stack
 
-| Layer | Component | Technology | 
-| :--- | :--- | :--- |
-| **ASR** | **Speech Recognition** | `WhisperX (large-v3)` with CTranslate2 engine |
-| **VAD** | **Audio Segmentation** | `Pyannote Audio` (Neural segmentation) |
-| **NLP** | **Syllable Correction**| `BARTpho + LoRA` (English-aware adapter) |
-| **NMT** | **Translation Engine** | `NLLB-200 (3.3B)` (High-performance translation) |
-| **AI** | **Context & Summary** | `LLaMA 3.1 (Groq API)` for intelligence |
-| **Cloud**| **Compute Layer** | `Modal` (Serverless NVIDIA A100 GPUs) |
-| **Web**  | **Real-time Comms** | `FastAPI` + `WebSockets` |
+| Layer     | Component               | Technology                                       |
+| :-------- | :---------------------- | :----------------------------------------------- |
+| **ASR**   | **Speech Recognition**  | `WhisperX (large-v3)` with CTranslate2 engine    |
+| **VAD**   | **Audio Segmentation**  | `Pyannote Audio` (Neural segmentation)           |
+| **NLP**   | **Syllable Correction** | `BARTpho + LoRA` (English-aware adapter)         |
+| **NMT**   | **Translation Engine**  | `NLLB-200 (3.3B)` (High-performance translation) |
+| **AI**    | **Context & Summary**   | `LLaMA 3.1 (Groq API)` for intelligence          |
+| **Cloud** | **Compute Layer**       | `Modal` (Serverless NVIDIA A100 GPUs)            |
+| **Web**   | **Real-time Comms**     | `FastAPI` + `WebSockets`                         |
 
 ---
 
 ## 🚀 Quick Start
 
 ### 1. Prerequisites
+
 - [Modal Token](https://modal.com/docs/guide/token)
 - [uv](https://github.com/astral-sh/uv) (Extremely fast Python package manager)
-- [Groq API Key](https://console.groq.com/keys) (Optional)
+- [Groq API Key](https://console.groq.com/keys) (for context priming & auto-summary)
+- [HuggingFace Token](https://huggingface.co/settings/tokens) (for downloading gated models)
 
 ### 2. Setup environment
+
 ```bash
 # Clone the repository
-git clone https://github.com/Senju14/Speech_to_text-realtime-for-lecture-hall.git
-cd Speech_to_text-realtime-for-lecture-hall
+git clone https://github.com/Ricky13170/DEVELOPING-A-REAL-TIME-BILINGUAL-SPEECH-TO-TEXT-CONVERSION-SYSTEM.git
+cd DEVELOPING-A-REAL-TIME-BILINGUAL-SPEECH-TO-TEXT-CONVERSION-SYSTEM
 
-# Create virtual environment and install dependencies using uv
+# Create virtual environment and install dependencies
 uv venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 uv pip install -r requirements.txt
 
-# Configure secrets
+# Configure environment variables
+cp .env.example .env
+# Edit .env and fill in your API keys:
+#   GROQ_API_KEY=gsk_...
+#   HF_TOKEN=hf_...
+
+# Authenticate with Modal
 modal token new
-modal secret create groq-api-key GROQ_API_KEY=your_key_here
 ```
 
 ### 3. Deploy
+
 ```bash
 modal deploy main.py
 ```
+
 > 🌐 **Visit the URL** in the terminal output to start transcribing!
 
 ---
@@ -97,11 +108,11 @@ modal deploy main.py
 
 Evaluated on **NVIDIA A100 40GB** using Google FLEURS VI test set.
 
-| Metric | Performance |
-|---|---|
-| **End-to-End Latency** | ~604ms (3s chunks) |
-| **RTF (Real-Time Factor)** | ~0.20 |
-| **VAD GPU Savings** | 15.9% |
+| Metric                      | Performance         |
+| --------------------------- | ------------------- |
+| **End-to-End Latency**      | ~604ms (3s chunks)  |
+| **RTF (Real-Time Factor)**  | ~0.20               |
+| **VAD GPU Savings**         | 15.9%               |
 | **Hallucination Rejection** | 776 segments caught |
 
 <p align="center">
@@ -134,6 +145,7 @@ Evaluated on **NVIDIA A100 40GB** using Google FLEURS VI test set.
 ---
 
 ## 📝 License & Credits
+
 Licensed under the [MIT License](LICENSE).
 
 Developed as a Graduation Thesis for **Ton Duc Thang University**.
